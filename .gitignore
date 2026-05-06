@@ -1,0 +1,7 @@
+# Ephemeral state the hooks read/write at runtime; don't commit.
+.claude/.evidence-reads
+AGENT_STOP
+STEER.md
+PROGRESS.md
+test-results.json
+screenshots/
