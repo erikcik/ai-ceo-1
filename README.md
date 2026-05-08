@@ -1,6 +1,12 @@
 # Harness Primitives for Long-Running Claude Agents
 
-An agent you can leave running for hours needs more than a good prompt. It needs a small amount of structure around it: enforcement that "done" means observed evidence, an independent check on its own claims, and a way for the next session to pick up cleanly where this one left off. [Effective Harnesses for Long-Running Agents](https://www.anthropic.com/engineering/effective-harnesses-for-long-running-agents) (Nov 2025) and [Harness Design for Long-Running Application Development](https://www.anthropic.com/engineering/harness-design-long-running-apps) (Mar 2026) describe these patterns; this repo is the code companion. It ships a short, readable example of each as a native [Claude Code hook](https://code.claude.com/docs/en/hooks) or subagent, so you can see the mechanism, copy what fits, and wire it into your own harness.
+Claude Code's built-in [`/goal`](https://code.claude.com/docs/en/goal) command gives you a generator/evaluator loop out of the box: set a completion condition and a separate fast model checks it after every turn until it's met. This repo ships the same underlying primitives as short, readable [hooks](https://code.claude.com/docs/en/hooks) and a [subagent](https://code.claude.com/docs/en/sub-agents), so you can see how each mechanism works and assemble a harness tuned to your project. The patterns come from [Effective Harnesses for Long-Running Agents](https://www.anthropic.com/engineering/effective-harnesses-for-long-running-agents) (Nov 2025) and [Harness Design for Long-Running Application Development](https://www.anthropic.com/engineering/harness-design-long-running-apps) (Mar 2026). We recommend trying both the in-product features and a custom harness to see which fits your workflow.
+
+| | In-product | Custom harness (this repo) |
+|---|---|---|
+| **What runs the loop** | [`/goal`](https://code.claude.com/docs/en/goal) | the [primitives below](#the-quality-loop) + a [loop you write](#running-the-loop) |
+| **Who judges "done"** | a separate fast model checking your condition | your [`agents/evaluator.md`](./claude-code-config/.claude/agents/evaluator.md) with your prompt |
+| **Where it works** | Claude Code interactive, [`-p`](https://code.claude.com/docs/en/headless), Remote Control | Claude Code, headless, or [Agent SDK](https://docs.claude.com/en/docs/claude-code/sdk) |
 
 Three primitives form the quality loop:
 
@@ -59,9 +65,41 @@ A fresh session has no memory of what the previous one did, and when a long sess
 
 A fourth core piece, a **rubric for subjective work**, isn't shipped here because it's project-specific; see [Going further](#going-further) for how to add one to the evaluator.
 
+## Running the loop
+
+Two ways to keep the build → evaluate → rebuild cycle going. `/goal` is built into Claude Code and works with or without this repo's primitives; the second path wires the contract file and your own `evaluator.md` directly into the loop.
+
+### `/goal`: built-in completion checker
+
+```
+/goal every feature in PROGRESS.md is implemented, committed, and its tests pass
+```
+
+After every turn a separate fast model checks the condition and keeps the session going until it's met. One line, no contract file or hooks. Works the same in interactive Claude Code, [`claude -p`](https://code.claude.com/docs/en/headless), and Remote Control. See the docs for [writing an effective condition](https://code.claude.com/docs/en/goal#write-an-effective-condition) and how `/goal` [compares to `/loop` and Stop hooks](https://code.claude.com/docs/en/goal#compare-to-other-autonomous-workflows).
+
+### Your `evaluator.md` as the gate
+
+When you want the default-FAIL contract (`test-results.json` + `verify-gate`) enforcing evidence and your own evaluator prompt deciding `PASS`/`NEEDS_WORK`, the loop lives in your code. How depends on where you're running:
+
+| Surface | How |
+|---|---|
+| **Claude Code** | custom [Stop hook](https://code.claude.com/docs/en/hooks#stop) runs the evaluator as a fresh `claude` process after each turn and blocks on anything but `PASS` |
+| **Headless** ([`claude -p`](https://code.claude.com/docs/en/headless)) | wrapper script calls `claude --agent evaluator -p` between builds (example below) |
+| [**Agent SDK**](https://docs.claude.com/en/docs/claude-code/sdk) | separate generator and evaluator `query()` calls; see [`evaluator_optimizer`](https://github.com/anthropics/claude-cookbooks/blob/main/patterns/agents/evaluator_optimizer.ipynb) |
+
+```bash
+while grep -q '"passes": false' test-results.json; do
+  claude -p "Read PROGRESS.md and build the next unfinished feature per CLAUDE.md."
+  VERDICT=$(claude --agent evaluator -p "Review the most recent commit against its spec.")
+  [ "$(echo "$VERDICT" | head -1)" = "PASS" ] || echo "$VERDICT" > NEXT_FINDINGS.md
+done
+```
+
+Each pass is a fresh context. Exit when the contract file has nothing left failing, a cycle makes no changes, or a budget is hit; `touch AGENT_STOP` to stop early. The builder writes `test-results.json` (verify-gate enforces evidence-read first) and the evaluator returns a separate verdict; have your wrapper write the contract on `PASS` instead if you want "all true" to mean "independently confirmed."
+
 ## Operator controls
 
-Two more hooks for when you want to watch the loop run or intervene mid-stream. These aren't part of the quality story; they're how a human stays in the loop.
+Two more hooks for when you want to watch the loop run or intervene mid-stream:
 
 | Hook | What it does |
 |---|---|
@@ -94,11 +132,5 @@ The next layer of patterns, each covered in depth in [Harness Design for Long-Ru
 | **Browser-verified evaluator** | Let the evaluator open the running app itself instead of trusting the builder's screenshots | [Frontend design](https://www.anthropic.com/engineering/harness-design-long-running-apps#frontend-design-making-subjective-quality-gradable) (Playwright MCP usage); add [`@playwright/mcp`](https://github.com/microsoft/playwright-mcp) or Claude in Chrome to `tools:` in `agents/evaluator.md` |
 | **Re-simplify on model upgrades** | After each model release, comment out harness pieces one at a time and see what's still load-bearing | [What comes next](https://www.anthropic.com/engineering/harness-design-long-running-apps#what-comes-next); [Harnessing Claude's Intelligence](https://claude.com/blog/harnessing-claudes-intelligence) |
 | **Hosted runtime** | Anthropic hosts the loop, sandbox, and scheduling so you don't run any of this yourself | [Claude Managed Agents](https://docs.claude.com/en/docs/managed-agents) |
-
-Example evaluator invocation, light form:
-
-```bash
-claude --agent evaluator -p "Review the diff and screenshots/ for feature N against its spec."
-```
 
 ---
