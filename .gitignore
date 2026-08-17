@@ -1,7 +1,9 @@
-# Ephemeral state the hooks read/write at runtime; don't commit.
+# Ephemeral state the hooks read/write at runtime; never commit.
 .claude/.evidence-reads
 AGENT_STOP
 STEER.md
-PROGRESS.md
-test-results.json
-screenshots/
+
+# Everything else a run produces -- LEVELS.md, SCOREBOARD.json, EVIDENCE.md,
+# RUBRIC.md, PROGRESS.md, PAUSED_ACTIONS.md, memory/, evidence/, logs/ -- is
+# deliberately committed. The handoff depends on git log being a real record of
+# what the loop did, and demo/ preserves exactly those files from a real run.

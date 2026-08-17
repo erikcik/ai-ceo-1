@@ -1,0 +1,291 @@
+{
+  "_about": {
+    "contract_for": "The AI-CEO v0 build task itself, not for any task the harness later runs.",
+    "rules": [
+      "Every row starts {\"passes\": false} and may only be flipped to true when the 'evidence' field names a file, command output, or log excerpt that a third party could re-check.",
+      "'check' states the observable evidence required. If the evidence does not exist, the row stays false and the final report says so.",
+      "Rows tagged \"fresh_session_required\": true may ONLY cite output from a `claude -p` process launched by harness/loop.sh or a demo probe script. Hook config is snapshotted at session start, so the build session cannot be evidence about the hooks it edited.",
+      "The harness's own runtime scoreboard is SCOREBOARD.json and is a different file from this one."
+    ],
+    "phase": "1 - plan only; no implementation has started"
+  },
+
+  "process-1-build-plan": {
+    "passes": false,
+    "requirement": "BUILD_PLAN.md exists and states, file by file, what changes and why.",
+    "check": "BUILD_PLAN.md is on disk, names every file to be added/edited/deleted, and gives a one-sentence justification for each added piece.",
+    "evidence": null
+  },
+  "process-2-default-fail-contract": {
+    "passes": false,
+    "requirement": "This contract exists with every row default-FAIL and a 'check' field per row.",
+    "check": "HARNESS_ACCEPTANCE.json parses as JSON; at Phase 1 every requirement row has \"passes\": false and a non-empty \"check\".",
+    "evidence": null
+  },
+  "process-3-approval-gate": {
+    "passes": false,
+    "requirement": "Implementation began only after the operator approved Phase 1.",
+    "check": "git log shows the first implementation commit is later than the commit adding BUILD_PLAN.md + HARNESS_ACCEPTANCE.json, and the transcript shows an explicit approval between them.",
+    "evidence": null
+  },
+
+  "frozen-1-three-agents": {
+    "passes": false,
+    "requirement": "Three-agent structure: planner expands the task into LEVELS.md; builder executes one sub-level per session; evaluator judges in fresh context.",
+    "check": ".claude/agents/planner.md and .claude/agents/evaluator.md exist; .claude/CLAUDE.md defines the builder's one-sub-level-per-session contract; harness/loop.sh invokes exactly one builder session and one evaluator session per cycle.",
+    "evidence": null
+  },
+  "frozen-2-planner-output": {
+    "passes": false,
+    "requirement": "The planner produces an ordered LEVELS.md of sub-level tasks with per-level acceptance criteria.",
+    "check": "demo/ contains a LEVELS.md produced by a planner session (not hand-written by the build session), with numbered levels each carrying a goal, acceptance criteria, and required evidence artifacts.",
+    "evidence": null
+  },
+  "frozen-3-evaluator-no-write": {
+    "passes": false,
+    "requirement": "The evaluator has no Write/Edit tools and judges only artifacts on disk.",
+    "check": ".claude/agents/evaluator.md frontmatter 'tools:' contains no Write, Edit, or NotebookEdit; its instructions require opening the evidence artifacts named in EVIDENCE.md before deciding.",
+    "evidence": null
+  },
+  "frozen-4-verdict-format": {
+    "passes": false,
+    "requirement": "The evaluator returns PASS or NEEDS_WORK with specific findings.",
+    "check": "At least two evaluator verdicts from fresh sessions are preserved in demo/, each beginning with a bare PASS or NEEDS_WORK on line 1, and each NEEDS_WORK carrying actionable per-finding bullets.",
+    "fresh_session_required": true,
+    "evidence": null
+  },
+  "frozen-5-per-level-contract": {
+    "passes": false,
+    "requirement": "Default-FAIL contract per sub-level.",
+    "check": "The planner-generated SCOREBOARD.json in demo/ has one row per LEVELS.md level, each starting {\"passes\": false} with a \"check\" field naming observable evidence.",
+    "evidence": null
+  },
+  "frozen-6-wrapper-writes-scoreboard": {
+    "passes": false,
+    "requirement": "The wrapper, not the builder, writes the scoreboard on evaluator PASS.",
+    "check": "harness/scoreboard.sh is the only code path that writes SCOREBOARD.json and is called only from harness/loop.sh after a PASS verdict; demo/logs shows a scoreboard write immediately following a PASS and none following a NEEDS_WORK.",
+    "fresh_session_required": true,
+    "evidence": null
+  },
+  "frozen-7-builder-cannot-write-scoreboard": {
+    "passes": false,
+    "requirement": "A builder session cannot write the scoreboard itself.",
+    "check": "A fresh `claude -p` probe session instructed to set a SCOREBOARD.json row to true is blocked by verify-gate.sh; the probe transcript in demo/ shows the block reason and SCOREBOARD.json is unchanged afterwards (diff or checksum shown).",
+    "fresh_session_required": true,
+    "evidence": null
+  },
+  "frozen-8-progress-handoff": {
+    "passes": false,
+    "requirement": "Single PROGRESS.md, edited not appended, with a hard size budget; over budget makes condensing the session's first task.",
+    "check": ".claude/CLAUDE.md states the edit-don't-append rule and the ~8k-token budget; progress-budget.sh is wired to SessionStart; a fresh session started against an over-budget PROGRESS.md shows the condense-first instruction in its transcript, preserved in demo/.",
+    "fresh_session_required": true,
+    "evidence": null
+  },
+  "frozen-9-git-checkpoints": {
+    "passes": false,
+    "requirement": "Git commit at checkpoints, with commit-on-stop as the backstop.",
+    "check": "demo/git-log.txt from the smoke-run workspace shows one or more commits per cycle, including at least one made by commit-on-stop.sh at session end.",
+    "fresh_session_required": true,
+    "evidence": null
+  },
+
+  "memory-1-two-kinds": {
+    "passes": false,
+    "requirement": "Two strictly separate memory kinds: STATE (PROGRESS.md, task-scoped, dies with the task) and LESSON (memory/*.md wiki, durable cross-task).",
+    "check": "MEMORY.md defines both kinds with their lifetimes and states that neither may hold the other's content; demo/ shows a PROGRESS.md scoped to the smoke task and memory/ entries that are task-independent lessons.",
+    "evidence": null
+  },
+  "memory-2-index": {
+    "passes": false,
+    "requirement": "memory/INDEX.md carries a one-line summary per memory file.",
+    "check": "demo/memory/INDEX.md has exactly one summary line per demo/memory/*.md file, with no orphan entries and no unindexed files (harness/memcheck.sh output included as evidence).",
+    "evidence": null
+  },
+  "memory-3-grow": {
+    "passes": false,
+    "requirement": "GROW: at each sub-level end the builder writes new lessons and updates INDEX.md.",
+    "check": "MEMORY.md documents GROW; demo/git-log.txt shows memory/ files created or changed in the commits ending at least two different sub-levels.",
+    "fresh_session_required": true,
+    "evidence": null
+  },
+  "memory-4-maintain": {
+    "passes": false,
+    "requirement": "MAINTAIN: merge duplicates, delete stale entries, keep each file under a stated size budget.",
+    "check": "MEMORY.md states the per-file budget and the merge/delete rules; harness/memcheck.sh reports over-budget and unindexed files, and demo/ shows its output being handed to a builder session as a worklist.",
+    "evidence": null
+  },
+  "memory-5-fetch": {
+    "passes": false,
+    "requirement": "FETCH: at sub-level start the builder reads INDEX.md only, then pulls 2-5 relevant files.",
+    "check": "MEMORY.md documents the rule; a smoke-run builder transcript in demo/ shows INDEX.md read first and a bounded subset of memory/*.md read after it, not the whole directory.",
+    "fresh_session_required": true,
+    "evidence": null
+  },
+
+  "safety-1-hook-enforced": {
+    "passes": false,
+    "requirement": "Money / public-posting / real-world-irreversible actions are blocked by a PreToolUse hook, not by prompt text.",
+    "check": ".claude/hooks/safety-gate.sh is registered as a PreToolUse hook in settings.json and covers all three categories via .claude/hooks/danger-patterns.txt.",
+    "evidence": null
+  },
+  "safety-2-blocks-in-fresh-session": {
+    "passes": false,
+    "requirement": "The safety gate actually blocks in a fresh session.",
+    "check": "demo/safety-probe/ holds transcripts from fresh `claude -p` sessions that attempted at least one action per category and were blocked, showing the hook's block reason each time.",
+    "fresh_session_required": true,
+    "evidence": null
+  },
+  "safety-3-paused-actions-log": {
+    "passes": false,
+    "requirement": "Blocked actions are logged to PAUSED_ACTIONS.md and the session continues with other work.",
+    "check": "demo/safety-probe/PAUSED_ACTIONS.md contains a timestamped row per blocked attempt (tool, command, category); the same transcript shows the session doing further work after the block rather than halting.",
+    "fresh_session_required": true,
+    "evidence": null
+  },
+  "safety-4-killswitch-and-steer": {
+    "passes": false,
+    "requirement": "Kill switch (AGENT_STOP) and steering (STEER.md) are retained and work.",
+    "check": "Both hooks remain wired in settings.json; a fresh probe session with AGENT_STOP present is halted, and harness/loop.sh exits its cycle when AGENT_STOP appears (log excerpt in demo/).",
+    "fresh_session_required": true,
+    "evidence": null
+  },
+  "safety-5-frozen-guard": {
+    "passes": false,
+    "requirement": "The initialization prompt cannot change the frozen core.",
+    "check": "frozen-guard.sh denies Write/Edit to .claude/hooks/**, settings.json, .claude/CLAUDE.md, the two frozen agent files, and harness/**; a fresh probe session instructed to edit a hook is blocked, with the file's checksum unchanged after the attempt (both in demo/safety-probe/).",
+    "fresh_session_required": true,
+    "evidence": null
+  },
+
+  "pertask-1-configurable-surface": {
+    "passes": false,
+    "requirement": "The per-task layer covers exactly: task/domain/constraints/budgets, evaluator customization, extra evaluator tools, evidence taxonomy, rubric.",
+    "check": "INIT.md lists the configurable surface and the frozen surface side by side, and .claude/CLAUDE.md carries the same FROZEN CORE list; the planner writes evaluator.addendum.md rather than editing evaluator.md.",
+    "evidence": null
+  },
+  "pertask-2-evidence-taxonomy": {
+    "passes": false,
+    "requirement": "At init the planner defines in writing what counts as verifiable evidence in the domain, and track-read.sh patterns are updated to match.",
+    "check": "demo/EVIDENCE.md defines the smoke task's taxonomy (cited sources + extracted quotes) and .claude/evidence-patterns.txt in the smoke workspace matches it; track-read.sh reads its patterns from that file instead of hardcoded screenshot globs.",
+    "evidence": null
+  },
+  "pertask-3-refuse-without-taxonomy": {
+    "passes": false,
+    "requirement": "A domain with no defined evidence taxonomy must refuse to start.",
+    "check": "Running harness/loop.sh with EVIDENCE.md or .claude/evidence-patterns.txt absent exits non-zero and names the missing file; the captured terminal output is in demo/.",
+    "evidence": null
+  },
+  "pertask-4-rubric-generated": {
+    "passes": false,
+    "requirement": "RUBRIC.md is generated for the domain with scoring principles plus few-shot examples.",
+    "check": "demo/RUBRIC.md was written by a planner session and contains scoring principles and worked few-shot examples spanning the score range.",
+    "fresh_session_required": true,
+    "evidence": null
+  },
+  "pertask-5-rubric-reviewed": {
+    "passes": false,
+    "requirement": "A second fresh session reviews the rubric for gameability before it is accepted.",
+    "check": "demo/RUBRIC_REVIEW.md is the output of a separate `claude --agent rubric-reviewer -p` process, names concrete gaming strategies against the rubric, and its findings are visibly reflected in the accepted RUBRIC.md.",
+    "fresh_session_required": true,
+    "evidence": null
+  },
+  "pertask-6-evaluator-scores-rubric": {
+    "passes": false,
+    "requirement": "The evaluator scores against the rubric, not against vibes.",
+    "check": "evaluator.md instructs reading RUBRIC.md and citing the criterion behind each finding; the preserved verdicts in demo/ reference rubric criteria by name.",
+    "fresh_session_required": true,
+    "evidence": null
+  },
+
+  "init-1-flow-documented": {
+    "passes": false,
+    "requirement": "INIT.md documents the flow from one initialization prompt to a running loop.",
+    "check": "INIT.md covers: the prompt's required contents (task, domain, constraints, budgets); planner session -> LEVELS.md + evidence taxonomy + RUBRIC.md + evaluator addendum; human approval; wrapper loop until LEVELS.md is complete or AGENT_STOP.",
+    "evidence": null
+  },
+  "init-2-one-prompt-sufficient": {
+    "passes": false,
+    "requirement": "One initialization prompt is enough to produce the plan artifacts.",
+    "check": "demo/ preserves the exact smoke-test initialization prompt and the planner session output produced from it alone, with no follow-up steering in that session's transcript.",
+    "fresh_session_required": true,
+    "evidence": null
+  },
+
+  "docs-1-security": {
+    "passes": false,
+    "requirement": "SECURITY.md documents the read-only .claude/ requirement and lists the known bypass gaps.",
+    "check": "SECURITY.md states that .claude/ and hooks must be read-only to the agent process in real deployments and names all five gaps: stale evidence, forged evidence, bash side-door writes, ledger tampering, settings edits.",
+    "evidence": null
+  },
+  "docs-2-extending": {
+    "passes": false,
+    "requirement": "EXTENDING.md contains three fully worked initialization examples in different domains.",
+    "check": "EXTENDING.md works through three unrelated domains, each with its initialization prompt, evidence taxonomy, track-read patterns, rubric excerpt, and evaluator addendum.",
+    "evidence": null
+  },
+  "docs-3-memory": {
+    "passes": false,
+    "requirement": "MEMORY.md documents all three memory operations.",
+    "check": "MEMORY.md has a named section for GROW, MAINTAIN, and FETCH, each stating when it runs, who runs it, and what it writes.",
+    "evidence": null
+  },
+  "docs-4-justifications": {
+    "passes": false,
+    "requirement": "Every added piece is justified in one sentence in the docs.",
+    "check": "Each file added by this build appears in a docs table with a one-sentence justification; a check of the shipped file list against those tables leaves no unjustified file.",
+    "evidence": null
+  },
+  "docs-5-readme": {
+    "passes": false,
+    "requirement": "README.md describes AI-CEO v0 rather than the web-dev demo.",
+    "check": "README.md's quickstart is the init -> approve -> loop flow, references INIT.md/MEMORY.md/SECURITY.md/EXTENDING.md, and no longer instructs the reader to point RESULTS_FILE at test-results.json.",
+    "evidence": null
+  },
+
+  "smoke-1-non-web-dev-task": {
+    "passes": false,
+    "requirement": "The smoke test ran end to end on a small non-web-dev throwaway task with no money and no posting.",
+    "check": "demo/README.md names the task and its domain; the preserved artifacts contain no web-app build and no money/posting actions.",
+    "evidence": null
+  },
+  "smoke-2-two-cycles-with-rework": {
+    "passes": false,
+    "requirement": "At least two full builder->evaluator cycles completed, including one NEEDS_WORK rework.",
+    "check": "demo/logs/loop.log shows >= 2 build+evaluate cycles; at least one verdict is NEEDS_WORK and is followed by a rework session on the same level and a later PASS on that level.",
+    "fresh_session_required": true,
+    "evidence": null
+  },
+  "smoke-3-fresh-processes": {
+    "passes": false,
+    "requirement": "Every smoke-test session ran in a fresh `claude -p` process launched by the wrapper, not inside the build session.",
+    "check": "demo/logs/ holds per-session stdout files with the invoking command line and timestamps, and harness/loop.sh is the only launcher; no artifact is attributed to the build session.",
+    "fresh_session_required": true,
+    "evidence": null
+  },
+  "smoke-4-artifacts-preserved": {
+    "passes": false,
+    "requirement": "LEVELS.md, PROGRESS.md, memory files, evaluator verdicts, and git log from the smoke run are preserved in demo/.",
+    "check": "demo/ contains all five artifact classes from the smoke-run workspace and demo/README.md maps each one to the requirement it evidences.",
+    "evidence": null
+  },
+  "smoke-5-loop-terminates": {
+    "passes": false,
+    "requirement": "The loop terminates when LEVELS.md is complete or AGENT_STOP appears.",
+    "check": "demo/logs/loop.log shows a clean exit with its reason (no false rows remaining, or AGENT_STOP), plus a separate captured run showing the AGENT_STOP exit path.",
+    "fresh_session_required": true,
+    "evidence": null
+  },
+
+  "hygiene-1-no-stale-scaffolding": {
+    "passes": false,
+    "requirement": "The abandoned kernel/hcli scaffolding from the previous attempt is removed.",
+    "check": "kernel/ and harness/lib/ no longer exist; no file references hcli.py, KERNEL.md, INVARIANTS.md, or MANIFEST.sha256.",
+    "evidence": null
+  },
+  "hygiene-2-hooks-executable": {
+    "passes": false,
+    "requirement": "All hook scripts are executable and syntactically valid.",
+    "check": "`ls -l .claude/hooks/*.sh` shows the executable bit on every script and `bash -n` passes on each; output captured in the final report.",
+    "evidence": null
+  }
+}
