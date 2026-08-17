@@ -100,6 +100,11 @@ writes to the files that implement them.
    `STEER.md` steering.
 7. **Evidence taxonomy required.** A domain with no written evidence taxonomy does not
    start; `harness/loop.sh` refuses.
+8. **The plan is locked at approval.** `LEVELS.md`, `RUBRIC.md`, `EVIDENCE.md` and the
+   evidence patterns are hashed when the loop first runs; you cannot edit them, and the loop
+   halts if they change. If a criterion is genuinely wrong or contradicts another level, say
+   so in `PROGRESS.md` and your `CLAIM.md` and do the level as written — the operator decides
+   and relocks. You do not get to move the bar you are measured against.
 
 Per-task configuration — what an initialization prompt *may* set — is the task and domain,
 constraints and budgets, `LEVELS.md`, `EVIDENCE.md` and its patterns, `RUBRIC.md`,

@@ -53,6 +53,13 @@ fi
 command -v claude >/dev/null || { echo "loop: claude CLI not found on PATH" >&2; exit 2; }
 git rev-parse --git-dir >/dev/null 2>&1 || { echo "loop: not a git repository (the handoff depends on git log)" >&2; exit 2; }
 
+# Lock the plan on first run: the acceptance criteria and rubric are the standard
+# the evaluator grades against, so they are fixed at approval and any later change
+# has to be an operator's, not a builder's.
+if [ ! -e .claude/plan-lock.sha256 ]; then
+  harness/planlock.sh lock || exit 2
+fi
+
 say "loop start | builder=$BUILDER_MODEL evaluator=$EVALUATOR_MODEL max_cycles=$MAX_CYCLES"
 say "preflight ok | $(harness/scoreboard.sh remaining) level(s) still failing"
 
@@ -60,6 +67,12 @@ say "preflight ok | $(harness/scoreboard.sh remaining) level(s) still failing"
 cycle=0
 while :; do
   if [ -e AGENT_STOP ]; then say "exit: AGENT_STOP present"; exit 0; fi
+
+  if ! harness/planlock.sh verify >/dev/null 2>&1; then
+    say "exit: the plan changed since approval -- halting rather than grading against a moved bar"
+    harness/planlock.sh verify >>"$LOOPLOG" 2>&1
+    exit 1
+  fi
 
   level=$(harness/scoreboard.sh next)
   if [ -z "$level" ]; then say "exit: every level in SCOREBOARD.json passes"; exit 0; fi

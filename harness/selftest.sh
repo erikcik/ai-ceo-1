@@ -151,6 +151,26 @@ if SCOREBOARD_FILE="$WORK/new.json" harness/scoreboard.sh seed "$WORK/seed-bad.j
   fail=$((fail+1)); echo "  FAIL  promoted a seed that was not default-FAIL"
 else pass=$((pass+1)); echo "  ok    refused a seed that was not default-FAIL"; fi
 
+echo "planlock: the plan is fixed at approval, and tampering halts the loop"
+PL="$WORK/planlock"; mkdir -p "$PL/.claude"; cp -R harness "$PL/"; cp -R .claude/hooks "$PL/.claude/"
+printf '# levels\n' > "$PL/LEVELS.md"; printf '# rubric\n' > "$PL/RUBRIC.md"
+printf '# evidence\n' > "$PL/EVIDENCE.md"; printf 'sources/*.md\n' > "$PL/.claude/evidence-patterns.txt"
+( cd "$PL" && harness/planlock.sh lock >/dev/null 2>&1 )
+if ( cd "$PL" && harness/planlock.sh verify >/dev/null 2>&1 ); then pass=$((pass+1)); echo "  ok    verify clean right after lock"; else fail=$((fail+1)); echo "  FAIL  verify dirty right after lock"; fi
+# frozen-guard must now deny the plan files, and still allow the builder's own work
+out=$(printf '{"tool_name":"Edit","tool_input":{"file_path":"LEVELS.md"}}' | CLAUDE_PROJECT_DIR="$PL" .claude/hooks/frozen-guard.sh)
+if printf '%s' "$out" | grep -q 'plan lock'; then pass=$((pass+1)); echo "  ok    BLOCK edit to a locked LEVELS.md"; else fail=$((fail+1)); echo "  FAIL  locked LEVELS.md was editable"; fi
+out=$(printf '{"tool_name":"Edit","tool_input":{"file_path":"RUBRIC.md"}}' | CLAUDE_PROJECT_DIR="$PL" .claude/hooks/frozen-guard.sh)
+if printf '%s' "$out" | grep -q 'plan lock'; then pass=$((pass+1)); echo "  ok    BLOCK edit to a locked RUBRIC.md"; else fail=$((fail+1)); echo "  FAIL  locked RUBRIC.md was editable"; fi
+out=$(printf '{"tool_name":"Bash","tool_input":{"command":"echo x >> LEVELS.md"}}' | CLAUDE_PROJECT_DIR="$PL" .claude/hooks/frozen-guard.sh)
+if printf '%s' "$out" | grep -q 'plan lock'; then pass=$((pass+1)); echo "  ok    BLOCK bash append to a locked file"; else fail=$((fail+1)); echo "  FAIL  bash append to a locked file allowed"; fi
+out=$(printf '{"tool_name":"Write","tool_input":{"file_path":"PROGRESS.md"}}' | CLAUDE_PROJECT_DIR="$PL" .claude/hooks/frozen-guard.sh)
+if printf '%s' "$out" | grep -q 'block'; then fail=$((fail+1)); echo "  FAIL  PROGRESS.md blocked by the plan lock"; else pass=$((pass+1)); echo "  ok    ALLOW the builder's own files"; fi
+echo "tampered" >> "$PL/LEVELS.md"
+if ( cd "$PL" && harness/planlock.sh verify >/dev/null 2>&1 ); then fail=$((fail+1)); echo "  FAIL  verify passed a tampered plan"; else pass=$((pass+1)); echo "  ok    verify catches a tampered plan"; fi
+( cd "$PL" && harness/planlock.sh relock >/dev/null 2>&1 )
+if ( cd "$PL" && harness/planlock.sh verify >/dev/null 2>&1 ); then pass=$((pass+1)); echo "  ok    relock accepts a deliberate operator change"; else fail=$((fail+1)); echo "  FAIL  relock did not restore a clean verify"; fi
+
 echo
 echo "selftest: $pass passed, $fail failed"
 [ "$fail" -eq 0 ] || exit 1

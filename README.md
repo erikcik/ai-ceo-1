@@ -72,6 +72,12 @@ with a `check` naming the evidence that would prove it. The builder cannot write
 a hook denies it outright. Only `harness/scoreboard.sh` writes it, only from the wrapper,
 only after the evaluator returned `PASS`. So a green row means *someone else looked*.
 
+**And it cannot move the goalposts.** At approval the plan is locked: `LEVELS.md`,
+`RUBRIC.md`, and `EVIDENCE.md` are hashed, the hook denies writes to them, and the loop halts
+if a hash stops matching. An agent that can rewrite its own acceptance criteria has no
+acceptance criteria — a gap found by the first smoke run, where the builder edited `LEVELS.md`
+seven minutes in.
+
 **The judge is a stranger.** The evaluator runs in a fresh context with no Write or Edit
 tools. It reads the acceptance criteria, the rubric, and the builder's written claim, then
 opens every artifact and checks the claim against it. The most common failure it catches is
@@ -90,6 +96,7 @@ is left. Durable learnings go somewhere else entirely — see below.
 | **`harness/loop.sh`** | Something outside the agent has to start each fresh session, run the evaluator, and write the scoreboard, and that something is 60 lines of bash. |
 | **`harness/scoreboard.sh`** | Concentrating every scoreboard write in one script called only by the wrapper is what makes `"passes": true` mean "independently confirmed". |
 | **`harness/memcheck.sh`** | MAINTAIN needs a concrete worklist, so one script reports which memory files are over budget or missing from the index. |
+| **`harness/planlock.sh`** | The builder is judged against `LEVELS.md` and `RUBRIC.md`, so it must not be able to edit them, while a change made deliberately by an operator has to stay possible. |
 | **`harness/selftest.sh`** | Hooks that fail silently are worse than no hooks, so one script asserts each gate blocks what it must and allows what it must. |
 | **`.claude/agents/planner.md`** | A one-line ask has to become an ordered plan with per-level acceptance before any building starts, and that is a different job from building. |
 | **`.claude/agents/evaluator.md`** | The builder cannot grade itself, so a context that never saw the build judges the artifacts on disk instead. |
@@ -155,7 +162,7 @@ read-only to the agent process — and lists the gaps the shipped hooks do not c
 you launch from a subdirectory.
 
 ```bash
-harness/selftest.sh     # 46 assertions over the hook logic — run after editing any gate
+harness/selftest.sh     # 53 assertions over the hook logic — run after editing any gate
 ```
 
 ## Docs

@@ -32,7 +32,10 @@ PROTECTED = [
     r"^\.claude/agents/planner\.md$",
     r"^\.claude/agents/evaluator\.md$",
     r"^harness(/|$)",
+    r"^\.claude/plan-lock\.sha256$",
 ]
+PLAN_LOCKED = []  # filled from .claude/plan-lock.sha256 below, if it exists
+
 REASON = (
     "BLOCKED by frozen-guard: {p} is part of the frozen core -- the three-agent "
     "structure, the default-FAIL contract, the wrapper that writes the scoreboard, "
@@ -40,6 +43,14 @@ REASON = (
     "change these from inside a session. Domain customization belongs in "
     ".claude/agents/evaluator.addendum.md, EVIDENCE.md, and RUBRIC.md. If the frozen "
     "core genuinely needs to change, stop and tell the operator."
+)
+PLAN_REASON = (
+    "BLOCKED by frozen-guard: {p} is part of the approved plan lock. It states the "
+    "standard you are being judged against, so you cannot edit it -- an agent that can "
+    "rewrite its own acceptance criteria has no acceptance criteria. If it is genuinely "
+    "wrong, or contradicts another level, say so plainly in PROGRESS.md and in "
+    "evidence/level-<N>/CLAIM.md and carry on with the level as written; the operator "
+    "reads those, decides, and runs `harness/planlock.sh relock` if the plan should change."
 )
 
 try:
@@ -50,6 +61,22 @@ except Exception:
 tool = ev.get("tool_name", "")
 ti = ev.get("tool_input", {}) or {}
 root = os.path.realpath(os.environ.get("CLAUDE_PROJECT_DIR", os.getcwd()))
+
+# Once the operator locks the plan, the standard this task is judged against --
+# LEVELS.md, RUBRIC.md, EVIDENCE.md, evidence-patterns.txt -- joins the protected
+# set. The builder must not be able to rewrite the bar it is measured by; the
+# operator relocks with `harness/planlock.sh relock` when a change is deliberate.
+lock = os.path.join(root, ".claude", "plan-lock.sha256")
+if os.path.exists(lock):
+    try:
+        for line in open(lock, encoding="utf-8"):
+            if line.startswith("#") or not line.strip():
+                continue
+            p = line.split(None, 1)[1].strip() if len(line.split(None, 1)) > 1 else ""
+            if p:
+                PLAN_LOCKED.append("^" + re.escape(p) + "$")
+    except OSError:
+        pass
 
 def rel(p):
     """Project-relative, normalized. None if outside the project."""
@@ -62,13 +89,21 @@ def rel(p):
         return None
     return None if r.startswith("..") else r.replace(os.sep, "/")
 
-def protected(r):
-    return r is not None and any(re.search(pat, r) for pat in PROTECTED)
+def why(r):
+    """Which reason applies to this project-relative path, or None if it is free."""
+    if r is None:
+        return None
+    if any(re.search(pat, r) for pat in PROTECTED):
+        return REASON
+    if any(re.search(pat, r) for pat in PLAN_LOCKED):
+        return PLAN_REASON
+    return None
 
 if tool in ("Write", "Edit", "NotebookEdit", "MultiEdit"):
     r = rel(ti.get("file_path") or ti.get("notebook_path"))
-    if protected(r):
-        print(json.dumps({"decision": "block", "reason": REASON.format(p=r)}))
+    reason = why(r)
+    if reason:
+        print(json.dumps({"decision": "block", "reason": reason.format(p=r)}))
     sys.exit(0)
 
 if tool == "Bash":
@@ -79,8 +114,9 @@ if tool == "Bash":
         r"\btruncate\b|\bdd\b|\bpatch\b|\bpython3?\b|\bperl\b|\bawk\b)", cmd)
     if writes:
         for token in re.findall(r"[\w./~-]+", cmd):
-            if protected(rel(token)):
-                print(json.dumps({"decision": "block", "reason": REASON.format(p=token)}))
+            reason = why(rel(token))
+            if reason:
+                print(json.dumps({"decision": "block", "reason": reason.format(p=token)}))
                 sys.exit(0)
     sys.exit(0)
 ' <<<"$input"
