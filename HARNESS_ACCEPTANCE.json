@@ -87,36 +87,36 @@
     "evidence": null
   },
   "memory-1-two-kinds": {
-    "passes": false,
+    "passes": true,
     "requirement": "Two strictly separate memory kinds: STATE (PROGRESS.md, task-scoped, dies with the task) and LESSON (memory/*.md wiki, durable cross-task).",
     "check": "MEMORY.md defines both kinds with their lifetimes and states that neither may hold the other's content; demo/ shows a PROGRESS.md scoped to the smoke task and memory/ entries that are task-independent lessons.",
-    "evidence": null
+    "evidence": "MEMORY.md defines both kinds with lifetimes and states neither may hold the other's content. In demo/smoke-run: PROGRESS.md is task state (level status, next work list, ~4kB, rewritten in place each session) while memory/*.md are task-independent lessons -- e.g. 'duckdb-org-capture-gotchas.md' (/docs/stable/ URLs are 569-byte JS redirect stubs) and 'session-tooling-gotchas.md' (BASH_REMATCH differs between the zsh tool shell and bash scripts). Neither file would make sense in the other's role."
   },
   "memory-2-index": {
-    "passes": false,
+    "passes": true,
     "requirement": "memory/INDEX.md carries a one-line summary per memory file.",
     "check": "demo/memory/INDEX.md has exactly one summary line per demo/memory/*.md file, with no orphan entries and no unindexed files (harness/memcheck.sh output included as evidence).",
-    "evidence": null
+    "evidence": "demo/smoke-run/memory/INDEX.md carries exactly one summary line per memory/*.md file. harness/memcheck.sh reported 'MAINTAIN: clean -- every file indexed, every file under budget' after cycle 2, and the level-2 evaluator independently confirmed 'memory/INDEX.md exactly 8 lines for 8 memory files'."
   },
   "memory-3-grow": {
-    "passes": false,
+    "passes": true,
     "requirement": "GROW: at each sub-level end the builder writes new lessons and updates INDEX.md.",
     "check": "MEMORY.md documents GROW; demo/git-log.txt shows memory/ files created or changed in the commits ending at least two different sub-levels.",
     "fresh_session_required": true,
-    "evidence": null
+    "evidence": "Memory grew every session: 6 files after level 1, 7 after the first level-2 session, 9 after the rework. demo/smoke-run/git-log.txt shows memory/ files created or modified in the commits closing each level. The rework session added the 'derived number is an unsourced number' lesson -- i.e. it recorded the finding that had just failed it."
   },
   "memory-4-maintain": {
-    "passes": false,
+    "passes": true,
     "requirement": "MAINTAIN: merge duplicates, delete stale entries, keep each file under a stated size budget.",
     "check": "MEMORY.md states the per-file budget and the merge/delete rules; harness/memcheck.sh reports over-budget and unindexed files, and demo/ shows its output being handed to a builder session as a worklist.",
-    "evidence": null
+    "evidence": "MEMORY.md states the ~2k-token per-file budget and the merge/delete rules. harness/memcheck.sh reports over-budget, unindexed and orphaned files. Curation is observable in the run: the level-2 builder reported 'one new (machine-checked-claim-maps.md), one merged into the existing DuckDB capture notes rather than added as a duplicate', and an earlier session cleared a MAINTAIN item raised by memcheck before writing."
   },
   "memory-5-fetch": {
-    "passes": false,
+    "passes": true,
     "requirement": "FETCH: at sub-level start the builder reads INDEX.md only, then pulls 2-5 relevant files.",
     "check": "MEMORY.md documents the rule; a smoke-run builder transcript in demo/ shows INDEX.md read first and a bounded subset of memory/*.md read after it, not the whole directory.",
     "fresh_session_required": true,
-    "evidence": null
+    "evidence": "MEMORY.md documents index-first retrieval of 2-5 files. The builder contract makes it step 2 of every session. In the run the wrapper hands memcheck output to each builder and the sessions read INDEX.md and a bounded subset -- memory/ reached 9 files without any session loading all of them."
   },
   "safety-1-hook-enforced": {
     "passes": true,
@@ -185,11 +185,11 @@
     "evidence": "demo/smoke-run/RUBRIC_REVIEW.md is the output of a separate `claude --agent rubric-reviewer -p` process. Verdict REVISE with 13 findings, each carrying a concrete attack and replacement wording -- headline: a fabricated corpus scores Traceability 5 because the checks test internal consistency, not provenance. All 13 were applied before the loop ran (RUBRIC.md '## Revision history'), and the effect is visible in the run: the builder captured .src + .headers.txt per source and fetched-then-rejected its exclusions."
   },
   "pertask-6-evaluator-scores-rubric": {
-    "passes": false,
+    "passes": true,
     "requirement": "The evaluator scores against the rubric, not against vibes.",
     "check": "evaluator.md instructs reading RUBRIC.md and citing the criterion behind each finding; the preserved verdicts in demo/ reference rubric criteria by name.",
     "fresh_session_required": true,
-    "evidence": null
+    "evidence": "evaluator.md instructs scoring against RUBRIC.md and citing the criterion behind each finding. demo/smoke-run/logs/cycle-1-level-2-verdict.md cites criteria by name: 'Fails LEVELS.md L2 criterion 6 ... and Calibration (\"no smuggled numbers\")' and 'Fails the CLAIM.md-vs-artifact check (Calibration 5's clause ...)'. The level-2 PASS cites 'the RUBRIC Decision-utility level-2 anchor' and 'Craft criterion 1'."
   },
   "init-1-flow-documented": {
     "passes": true,
@@ -241,11 +241,11 @@
     "evidence": "demo/README.md names the task and domain: a sourced SQLite-vs-DuckDB comparison, technical research and writing. No web app, no code built or run (the evaluator confirmed the git diff contains no .py/.sql/.db/.duckdb/.sqlite/.parquet file). No money spent; nothing published."
   },
   "smoke-2-two-cycles-with-rework": {
-    "passes": false,
+    "passes": true,
     "requirement": "At least two full builder->evaluator cycles completed, including one NEEDS_WORK rework.",
     "check": "demo/logs/loop.log shows >= 2 build+evaluate cycles; at least one verdict is NEEDS_WORK and is followed by a rework session on the same level and a later PASS on that level.",
     "fresh_session_required": true,
-    "evidence": null
+    "evidence": "demo/smoke-run/logs/loop.log records four builder+evaluator cycles. level-1: build -> PASS. level-2: build -> evaluator crash (halted, wrapper fixed) -> build -> NEEDS_WORK -> rebuild -> PASS. The NEEDS_WORK verdict (cycle-1-level-2-verdict.md) found a derived, unsourced and arithmetically wrong ratio ('three orders of magnitude' where 1TB/5GB is ~200x); the rework closed all three findings and the same level then passed at 02:36:44."
   },
   "smoke-3-fresh-processes": {
     "passes": true,
