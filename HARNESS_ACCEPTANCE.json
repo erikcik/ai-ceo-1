@@ -7,7 +7,7 @@
       "Rows tagged \"fresh_session_required\": true may ONLY cite output from a `claude -p` process launched by harness/loop.sh or a demo probe script. Hook config is snapshotted at session start, so the build session cannot be evidence about the hooks it edited.",
       "The harness's own runtime scoreboard is SCOREBOARD.json and is a different file from this one."
     ],
-    "phase": "1 - plan only; no implementation has started"
+    "phase": "2 - implemented; rows carry evidence"
   },
   "process-1-build-plan": {
     "passes": true,
@@ -34,10 +34,10 @@
     "evidence": ".claude/agents/planner.md and evaluator.md exist (plus rubric-reviewer.md, an init-time reviewer, not a loop agent). .claude/CLAUDE.md '## One sub-level per session'. harness/loop.sh runs exactly one `claude -p` builder and one `claude --agent evaluator -p` per cycle."
   },
   "frozen-2-planner-output": {
-    "passes": false,
+    "passes": true,
     "requirement": "The planner produces an ordered LEVELS.md of sub-level tasks with per-level acceptance criteria.",
     "check": "demo/ contains a LEVELS.md produced by a planner session (not hand-written by the build session), with numbered levels each carrying a goal, acceptance criteria, and required evidence artifacts.",
-    "evidence": null
+    "evidence": "demo/smoke-run/LEVELS.md was written by a planner session (logs/plan-planner.log records the `claude --agent planner -p` invocation). Four numbered levels, each with a goal, numbered acceptance criteria, named evidence artifacts, dependencies, and a 'where the budget binds' note."
   },
   "frozen-3-evaluator-no-write": {
     "passes": true,
@@ -46,24 +46,24 @@
     "evidence": "`grep '^tools:' .claude/agents/evaluator.md` -> 'tools: Read, Glob, Grep, Bash' -- no Write, Edit, or NotebookEdit. Its instructions require opening every artifact named in EVIDENCE.md and evidence/level-N/CLAIM.md before deciding."
   },
   "frozen-4-verdict-format": {
-    "passes": false,
+    "passes": true,
     "requirement": "The evaluator returns PASS or NEEDS_WORK with specific findings.",
     "check": "At least two evaluator verdicts from fresh sessions are preserved in demo/, each beginning with a bare PASS or NEEDS_WORK on line 1, and each NEEDS_WORK carrying actionable per-finding bullets.",
     "fresh_session_required": true,
-    "evidence": null
+    "evidence": "demo/smoke-run/logs/cycle-1-level-1-verdict.md begins with a bare `PASS` on line 1 and names the artifacts that convinced it, criterion by criterion. Additional verdicts from later cycles are in the same directory. Format is machine-readable: loop.sh parses line 1."
   },
   "frozen-5-per-level-contract": {
-    "passes": false,
+    "passes": true,
     "requirement": "Default-FAIL contract per sub-level.",
     "check": "The planner-generated SCOREBOARD.json in demo/ has one row per LEVELS.md level, each starting {\"passes\": false} with a \"check\" field naming observable evidence.",
-    "evidence": null
+    "evidence": "demo/smoke-run/SCOREBOARD.json has one row per LEVELS.md level (level-1..level-4). It was promoted from the planner's SCOREBOARD.seed.json by `harness/scoreboard.sh seed`, which refuses any row that is not {\"passes\": false} with a non-empty check -- see the selftest assertion 'refused a seed that was not default-FAIL'."
   },
   "frozen-6-wrapper-writes-scoreboard": {
-    "passes": false,
+    "passes": true,
     "requirement": "The wrapper, not the builder, writes the scoreboard on evaluator PASS.",
     "check": "harness/scoreboard.sh is the only code path that writes SCOREBOARD.json and is called only from harness/loop.sh after a PASS verdict; demo/logs shows a scoreboard write immediately following a PASS and none following a NEEDS_WORK.",
     "fresh_session_required": true,
-    "evidence": null
+    "evidence": "demo/smoke-run/logs/loop.log line 'cycle 1 | verdict=PASS' is immediately followed by 'scoreboard: level-1 -> passes: true (evaluator PASS)' from harness/scoreboard.sh. The resulting row carries confirmed_at and verdict_file provenance. scoreboard.sh refuses to flip a row unless PASS_VERDICT_FILE names a verdict whose first line is PASS (demo/loop-guards/README.md section 4)."
   },
   "frozen-7-builder-cannot-write-scoreboard": {
     "passes": true,
@@ -159,10 +159,10 @@
     "evidence": "INIT.md '## What a prompt cannot change' lists the frozen and configurable surfaces side by side; .claude/CLAUDE.md '## FROZEN CORE' carries the same seven-item list. planner.md instructs writing .claude/agents/evaluator.addendum.md and forbids touching evaluator.md; the smoke-run planner did exactly that (demo/smoke-run/.claude/agents/evaluator.addendum.md) and deferred its tool request to the operator rather than granting itself tools."
   },
   "pertask-2-evidence-taxonomy": {
-    "passes": false,
+    "passes": true,
     "requirement": "At init the planner defines in writing what counts as verifiable evidence in the domain, and track-read.sh patterns are updated to match.",
     "check": "demo/EVIDENCE.md defines the smoke task's taxonomy (cited sources + extracted quotes) and .claude/evidence-patterns.txt in the smoke workspace matches it; track-read.sh reads its patterns from that file instead of hardcoded screenshot globs.",
-    "evidence": null
+    "evidence": "demo/smoke-run/EVIDENCE.md defines the taxonomy for a research domain -- source entries with an 11-field header, raw captures as .src/.txt/.headers.txt, verbatim quotes with locators -- and nothing resembling a screenshot. demo/smoke-run/.claude/evidence-patterns.txt mirrors it, and deliberately excludes REPORT.md and CLAIM.md ('reading the thing you wrote about your own work is not opening evidence')."
   },
   "pertask-3-refuse-without-taxonomy": {
     "passes": true,
@@ -171,18 +171,18 @@
     "evidence": "demo/loop-guards/README.md section 1: `harness/loop.sh` exits 2 and names the missing files, both with an empty workspace and with LEVELS.md/SCOREBOARD.json/RUBRIC.md present but EVIDENCE.md and .claude/evidence-patterns.txt absent. planner.md carries the matching refusal instruction ('Refuse to start if you cannot define evidence')."
   },
   "pertask-4-rubric-generated": {
-    "passes": false,
+    "passes": true,
     "requirement": "RUBRIC.md is generated for the domain with scoring principles plus few-shot examples.",
     "check": "demo/RUBRIC.md was written by a planner session and contains scoring principles and worked few-shot examples spanning the score range.",
     "fresh_session_required": true,
-    "evidence": null
+    "evidence": "demo/smoke-run/RUBRIC.md was written by the planner session: five named criteria, a 1-5 scale with concrete anchors, worked 1/3/5 examples using this task's own material, and mandatory floors on Traceability and Source primacy."
   },
   "pertask-5-rubric-reviewed": {
-    "passes": false,
+    "passes": true,
     "requirement": "A second fresh session reviews the rubric for gameability before it is accepted.",
     "check": "demo/RUBRIC_REVIEW.md is the output of a separate `claude --agent rubric-reviewer -p` process, names concrete gaming strategies against the rubric, and its findings are visibly reflected in the accepted RUBRIC.md.",
     "fresh_session_required": true,
-    "evidence": null
+    "evidence": "demo/smoke-run/RUBRIC_REVIEW.md is the output of a separate `claude --agent rubric-reviewer -p` process. Verdict REVISE with 13 findings, each carrying a concrete attack and replacement wording -- headline: a fabricated corpus scores Traceability 5 because the checks test internal consistency, not provenance. All 13 were applied before the loop ran (RUBRIC.md '## Revision history'), and the effect is visible in the run: the builder captured .src + .headers.txt per source and fetched-then-rejected its exclusions."
   },
   "pertask-6-evaluator-scores-rubric": {
     "passes": false,
@@ -198,11 +198,11 @@
     "evidence": "INIT.md covers all five stages: the prompt's required contents (task/domain/constraints/budget), the planner's six outputs, the rubric-reviewer, the human approval gate including adding evaluator tools, and the loop until every row passes or AGENT_STOP -- with the watch/intervene commands and the exit conditions."
   },
   "init-2-one-prompt-sufficient": {
-    "passes": false,
+    "passes": true,
     "requirement": "One initialization prompt is enough to produce the plan artifacts.",
     "check": "demo/ preserves the exact smoke-test initialization prompt and the planner session output produced from it alone, with no follow-up steering in that session's transcript.",
     "fresh_session_required": true,
-    "evidence": null
+    "evidence": "demo/smoke-run/INIT_PROMPT.md is the complete human input. demo/smoke-run/logs/plan-planner.log shows the single `claude --agent planner -p` invocation that produced LEVELS.md, EVIDENCE.md, evidence-patterns.txt, RUBRIC.md, SCOREBOARD.seed.json and evaluator.addendum.md from it, with no follow-up steering."
   },
   "docs-1-security": {
     "passes": true,
@@ -235,10 +235,10 @@
     "evidence": "README.md's quickstart is plan.sh -> approve -> loop.sh; it links INIT.md, MEMORY.md, SECURITY.md, EXTENDING.md and demo/; `grep -rn 'test-results.json|RESULTS_FILE'` returns no hit outside BUILD_PLAN.md's record of the rename and this contract's own check text."
   },
   "smoke-1-non-web-dev-task": {
-    "passes": false,
+    "passes": true,
     "requirement": "The smoke test ran end to end on a small non-web-dev throwaway task with no money and no posting.",
     "check": "demo/README.md names the task and its domain; the preserved artifacts contain no web-app build and no money/posting actions.",
-    "evidence": null
+    "evidence": "demo/README.md names the task and domain: a sourced SQLite-vs-DuckDB comparison, technical research and writing. No web app, no code built or run (the evaluator confirmed the git diff contains no .py/.sql/.db/.duckdb/.sqlite/.parquet file). No money spent; nothing published."
   },
   "smoke-2-two-cycles-with-rework": {
     "passes": false,
@@ -248,11 +248,11 @@
     "evidence": null
   },
   "smoke-3-fresh-processes": {
-    "passes": false,
+    "passes": true,
     "requirement": "Every smoke-test session ran in a fresh `claude -p` process launched by the wrapper, not inside the build session.",
     "check": "demo/logs/ holds per-session stdout files with the invoking command line and timestamps, and harness/loop.sh is the only launcher; no artifact is attributed to the build session.",
     "fresh_session_required": true,
-    "evidence": null
+    "evidence": "Every session ran as a separate process launched by a script. demo/smoke-run/logs/ holds one stdout file per session, each opening with the invoking command line, the model, the permission mode and the cwd. harness/loop.sh and harness/plan.sh are the only launchers; the build session that wrote the harness launched none of them directly."
   },
   "smoke-4-artifacts-preserved": {
     "passes": false,
