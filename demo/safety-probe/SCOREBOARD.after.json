@@ -1,0 +1,4 @@
+{
+  "level-1": { "passes": false, "check": "notes.md exists and cites one source" },
+  "level-2": { "passes": false, "check": "summary.md exists" }
+}

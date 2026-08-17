@@ -286,6 +286,38 @@ capability pays.
 6. Smoke test + safety probes in fresh processes; preserve `demo/`.
 7. Flip `HARNESS_ACCEPTANCE.json` rows with evidence; report anything that stays `false`.
 
+## Deviations from this plan, and why
+
+Recorded during Phase 2. The plan was approved as written; these are the places the
+implementation departed from it.
+
+1. **`templates/` was not built.** The plan listed `RUBRIC.template.md` /
+   `EVIDENCE.template.md` starting points. `planner.md` already specifies the required
+   structure of each artifact in more detail than a template could, so templates would have
+   been a second copy of the same spec, free to drift from the first. Dropped under the
+   repo's own rule: a piece that can't be justified in one sentence doesn't get built.
+
+2. **`harness/selftest.sh` was added** (not in the plan). Justification: *hooks that fail
+   silently are worse than no hooks, so one script asserts each gate blocks what it must and
+   allows what it must.* It earned its place immediately — the first `danger-patterns.txt`
+   had literal tabs inside its regexes, which the TAB field-splitter turned into invalid
+   patterns that `except re.error: continue` skipped without a word. `git push` and `rm -rf`
+   passed straight through a gate that reported clean. Two fixes followed: `\s` instead of
+   literal tabs, and **fail closed** — an unparseable rule now blocks every tool call until a
+   human fixes it.
+
+3. **The planner writes `SCOREBOARD.seed.json`, not `SCOREBOARD.json`.** The plan had
+   `verify-gate.sh` deny every session write to the scoreboard, and had the planner create
+   it — which cannot both be true. Rather than punching a planner-shaped hole in the gate,
+   the planner writes a seed and `harness/scoreboard.sh seed` validates that every row is
+   genuinely default-FAIL with a non-empty `check` before promoting it. The rule stays
+   absolute (no session ever writes the scoreboard) and the contract gains a validation step.
+
+4. **`frozen-guard.sh` also inspects `Bash`**, which the plan mentioned only as a documented
+   gap. It now blocks redirects, `sed -i`, `cp`/`mv`/`rm` and interpreter invocations naming a
+   protected path. This closes the obvious side door; the gap is still documented in
+   SECURITY.md, because regexes over shell commands cannot be made complete.
+
 ## Assumptions — override any of these at approval
 
 1. `.claude/` moves to the repo root and `claude-code-config/` is deleted (the repo becomes
