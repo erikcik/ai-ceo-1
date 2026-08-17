@@ -33,8 +33,17 @@ if not os.path.exists(index):
     problems.append("INDEX.md is missing -- create it with one summary line per memory file.")
     listed = set()
 else:
-    text = open(index, encoding="utf-8").read()
-    listed = set(re.findall(r"([A-Za-z0-9._-]+\.md)", text))
+    # Only the first .md of a list item counts as an index ENTRY. Scanning the
+    # whole file for anything ending in .md picks up prose too: the header of a
+    # real INDEX.md said "task state lives in PROGRESS.md, not here", which is a
+    # sentence, not an entry, and reporting it as an orphan sent every MAINTAIN
+    # pass chasing a file that was never supposed to exist.
+    # (No apostrophes in here -- this block is inside a single-quoted python3 -c.)
+    listed = set()
+    for line in open(index, encoding="utf-8"):
+        m = re.match(r"\s*[-*+]\s*`?([A-Za-z0-9._-]+\.md)`?", line)
+        if m:
+            listed.add(m.group(1))
     listed.discard("INDEX.md")
 
 for f in files:

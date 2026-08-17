@@ -162,7 +162,7 @@ read-only to the agent process — and lists the gaps the shipped hooks do not c
 you launch from a subdirectory.
 
 ```bash
-harness/selftest.sh     # 53 assertions over the hook logic — run after editing any gate
+harness/selftest.sh     # 57 assertions over the hook logic — run after editing any gate
 ```
 
 ## Docs

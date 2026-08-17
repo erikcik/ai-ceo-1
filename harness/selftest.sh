@@ -151,6 +151,28 @@ if SCOREBOARD_FILE="$WORK/new.json" harness/scoreboard.sh seed "$WORK/seed-bad.j
   fail=$((fail+1)); echo "  FAIL  promoted a seed that was not default-FAIL"
 else pass=$((pass+1)); echo "  ok    refused a seed that was not default-FAIL"; fi
 
+echo "memcheck: index entries, not prose mentions"
+MEM="$WORK/mem"; mkdir -p "$MEM"
+printf '# lesson a\n' > "$MEM/a.md"
+printf '# lesson b\n' > "$MEM/b.md"
+cat > "$MEM/INDEX.md" <<'MD'
+# INDEX
+
+Task state lives in `PROGRESS.md`, not here. See also `NOTES.md` for nothing.
+
+- `a.md` — the first lesson
+- `b.md` — the second lesson
+MD
+out=$(MEMORY_DIR="$MEM" harness/memcheck.sh 2>&1)
+if printf '%s' "$out" | grep -q 'PROGRESS.md'; then fail=$((fail+1)); echo "  FAIL  a prose mention was reported as an orphan entry"; else pass=$((pass+1)); echo "  ok    prose mentions are not index entries"; fi
+if printf '%s' "$out" | grep -q 'clean'; then pass=$((pass+1)); echo "  ok    a consistent index reports clean"; else fail=$((fail+1)); echo "  FAIL  a consistent index did not report clean"; fi
+printf '# lesson c\n' > "$MEM/c.md"
+out=$(MEMORY_DIR="$MEM" harness/memcheck.sh 2>&1)
+if printf '%s' "$out" | grep -q 'c.md is not in INDEX.md'; then pass=$((pass+1)); echo "  ok    an unindexed file is reported"; else fail=$((fail+1)); echo "  FAIL  unindexed file not reported"; fi
+python3 -c "open('$MEM/a.md','w').write('x'*9000)"
+out=$(MEMORY_DIR="$MEM" harness/memcheck.sh 2>&1)
+if printf '%s' "$out" | grep -q 'over the 2000 budget'; then pass=$((pass+1)); echo "  ok    an over-budget file is reported"; else fail=$((fail+1)); echo "  FAIL  over-budget file not reported"; fi
+
 echo "planlock: the plan is fixed at approval, and tampering halts the loop"
 PL="$WORK/planlock"; mkdir -p "$PL/.claude"; cp -R harness "$PL/"; cp -R .claude/hooks "$PL/.claude/"
 printf '# levels\n' > "$PL/LEVELS.md"; printf '# rubric\n' > "$PL/RUBRIC.md"
