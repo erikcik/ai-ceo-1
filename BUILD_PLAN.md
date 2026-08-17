@@ -329,3 +329,41 @@ implementation departed from it.
    harness-design articles stay; the README credits its origin as this event demo.
 5. `git push` stays blocked by `safety-gate.sh` and I never push (consistent with your
    standing rule).
+
+## Finding during the smoke run: the plan itself was not protected
+
+Recorded at the point of discovery, before it was fixed.
+
+`frozen-guard.sh` as designed protects the *machinery* — hooks, settings, the builder
+contract, the two loop agents, the wrapper. It does not protect the *plan*: `LEVELS.md`,
+`RUBRIC.md`, and `EVIDENCE.md` are per-task files, written by the planner and approved by the
+operator, and therefore left writable.
+
+Seven minutes into the smoke run's first builder session, `commit-on-stop.sh` produced
+checkpoint `baab191`, which modified `LEVELS.md`. The builder had edited the acceptance
+criteria it was about to be judged against.
+
+The edits were, in this case, honest corrections: it caught that the operator's scoping
+decision (5–8 source entries, down from 8–12) contradicts level 2 criterion 3 and level 3
+criterion 4, both of which require ≥6 distinct source keys — so a dossier of exactly 5 would
+satisfy level 1 and make levels 2 and 3 unreachable. That is a real defect I introduced at
+the approval gate, and the builder caught it. It also fixed stale "≥8" and "12 sources"
+strings I had missed.
+
+Helpful, and beside the point. **Nothing in the harness distinguished that edit from one
+that lowers the bar.** A builder that finds a criterion inconvenient can rewrite it, and the
+evaluator — which reads `LEVELS.md` fresh, with no memory of what it said at approval — would
+grade against the rewritten version and never know. The whole default-FAIL construction rests
+on the criteria being fixed at approval; `SCOREBOARD.json` being unwritable protects the
+*verdict* while leaving the *standard* open.
+
+**Fix: a plan lock.** `harness/planlock.sh` records a sha256 of the plan files at approval;
+`frozen-guard.sh` denies writes to any locked path; `loop.sh` verifies the lock before and
+after every cycle and halts on a mismatch. The operator relocks deliberately when the plan
+genuinely needs to change. Justification: *the builder is judged against `LEVELS.md` and
+`RUBRIC.md`, so it must not be able to edit them, and a change made deliberately by an
+operator has to remain possible.*
+
+The running smoke test was deliberately **not** interrupted to apply this — changing the
+rules mid-experiment would have invalidated the evidence it was producing. The fix landed
+after the loop finished and was verified by its own fresh-session probe.
