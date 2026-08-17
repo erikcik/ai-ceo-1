@@ -367,3 +367,48 @@ operator has to remain possible.*
 The running smoke test was deliberately **not** interrupted to apply this — changing the
 rules mid-experiment would have invalidated the evidence it was producing. The fix landed
 after the loop finished and was verified by its own fresh-session probe.
+
+## Second finding: a crashed evaluator was laundered into a review finding
+
+Also caught live, in cycle 2 of the smoke run.
+
+The evaluator session died on an API error after printing one line of narration, so
+`logs/cycle-2-level-2-verdict.md` read, in full:
+
+```
+I'll start by reading the core framework files.
+API Error: Server error mid-response. The response above may be incomplete.
+```
+
+`loop.sh` parsed line 1, found it was not `PASS`, and did what the plan said to do with a
+non-`PASS` verdict: copied the whole thing to `NEXT_FINDINGS.md` and started a fresh builder
+session whose work list was *"API Error: Server error mid-response."*
+
+**An infrastructure failure had been converted into a quality judgement.** That is worse than
+a crash. A crash is visible and stops you; this quietly spends a full builder session — thirty
+minutes of Opus, in this run — on nothing, leaves the level `false`, and would do it again
+next cycle. On a longer unattended run it is an infinite loop that looks like normal
+operation, and every cycle of it lands in `git log` as if it were work.
+
+The bug had two halves, and the second is the one that matters:
+
+1. **Brittle parsing.** Reading only line 1 fails whenever a model narrates before its
+   verdict — which the very same evaluator had not done in cycle 1, so the run looked fine
+   until it wasn't. `read_verdict` now scans for a line that is exactly `PASS` or
+   `NEEDS_WORK` anywhere in the output, tolerating markdown emphasis, and refuses prose that
+   merely contains the words.
+2. **No distinction between "failed the work" and "failed to run".** Absence of a verdict is
+   now its own outcome: retry the evaluator once, and if there is still no verdict, **halt**
+   with the level untouched, the scoreboard unchanged, and a message saying this is an
+   evaluator failure rather than a finding. `NEXT_FINDINGS.md` is never written from output
+   that contains no verdict.
+
+Seven assertions in `harness/selftest.sh` cover it, including the exact two-line output that
+caused it. The run was halted, the wrapper fixed, the garbage findings discarded, and the loop
+resumed against the level-2 artifacts cycle 2 had already produced — which were good; only
+the evaluation had failed.
+
+**The general lesson, which is why this is written up rather than just fixed:** a harness that
+turns every non-success into "the work needs improvement" will keep itself busy forever. Any
+gate that produces a verdict needs a third outcome — *did not run* — and it has to stop the
+loop rather than feed it.
