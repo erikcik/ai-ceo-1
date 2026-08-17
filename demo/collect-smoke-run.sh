@@ -18,7 +18,7 @@ rm -rf "$DST"; mkdir -p "$DST/.claude/agents"
 # Plan artifacts, contract, handoff, memory, evidence, logs.
 for f in INIT_PROMPT.md LEVELS.md EVIDENCE.md RUBRIC.md RUBRIC_REVIEW.md \
          SCOREBOARD.json PROGRESS.md PAUSED_ACTIONS.md NEXT_FINDINGS.md \
-         REPORT.md SCOREBOARD_CHECK_PATCH.md; do
+         REPORT.md SCOREBOARD_CHECK_PATCH.md OPERATOR_NOTES.md; do
   [ -e "$SRC/$f" ] && cp "$SRC/$f" "$DST/$f"
 done
 for d in memory evidence sources claims logs; do

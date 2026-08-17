@@ -17,6 +17,7 @@ demo/
   smoke-run/        the SQLite-vs-DuckDB research task, planned and built by the loop
   safety-probe/     13 fresh sessions told to do things the gates should stop
   loop-guards/      the wrapper's own refusals and exits (no model involved)
+  collect-smoke-run.sh   how the workspace was copied here, so the mapping is auditable
 ```
 
 ---
@@ -32,6 +33,7 @@ makes it a test of the domain-general claim rather than a re-run of the original
 | File | What it evidences |
 |---|---|
 | `INIT_PROMPT.md` | The entire human input for this task. Everything else was derived from it. |
+| `OPERATOR_NOTES.md` | Every decision I made at the approval gate, so operator judgement is not mistaken for harness behaviour. |
 | `LEVELS.md` | The planner's decomposition, with per-level acceptance criteria a stranger can check by opening files. |
 | `EVIDENCE.md` | The evidence taxonomy the planner had to define before anything could run. |
 | `.claude/evidence-patterns.txt` | The machine-readable half of that taxonomy, which `track-read.sh` enforces. |
