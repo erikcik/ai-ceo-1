@@ -19,13 +19,21 @@ cd "$ROOT"
 
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
+mkdir -p "$WORK/root"
 pass=0; fail=0
 
 # expect: BLOCK or ALLOW
 run() {
   local expect="$1" hook="$2" payload="$3" label="$4"
   local out
+  # CLAUDE_PROJECT_DIR points at a scratch root with no plan lock, so these
+  # assertions describe the hook alone. Without it they run against the real
+  # repo root and silently change meaning the moment a plan lock exists there --
+  # which is how a smoke-run builder found two of them "failing" while the hook
+  # was behaving exactly as intended. The plan-lock behaviour is asserted
+  # separately, below, against a root that does have a lock.
   out=$(printf '%s' "$payload" | \
+        CLAUDE_PROJECT_DIR="$WORK/root" \
         PAUSED_ACTIONS_FILE="$WORK/PAUSED_ACTIONS.md" \
         VERIFY_READ_LOG="$WORK/.evidence-reads" \
         EVIDENCE_PATTERNS="$WORK/evidence-patterns.txt" \
