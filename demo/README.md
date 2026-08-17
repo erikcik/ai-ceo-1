@@ -46,6 +46,40 @@ makes it a test of the domain-general claim rather than a re-run of the original
 | `logs/` | Per-session stdout with the invoking command line, and `loop.log` with every cycle and verdict. |
 | `git-log.txt` | The commit record of the run. |
 
+### The rework, and what the evaluator caught
+
+The loop's whole purpose is the `NEEDS_WORK` cycle, so here is the one this run produced.
+
+Level 2 builds the claim map: every sentence the report intends to write, bound to a specific
+quote in a specific capture. The builder's map was strong — 29 rows over 24 distinct quotes,
+a generator script that rebuilds the verification transcript by *running* every check, and a
+`CLAIM.md` that volunteered its own weak points. Six of the seven criteria passed.
+
+The evaluator failed it on one row:
+
+> **Fails L2 criterion 6 … `claims/claim-map.md` line 30, row C4.** The row ends: *"— a
+> content-size bound that 5 GB is three orders of magnitude inside."* The cited quote contains
+> only "less than a terabyte of content"; the magnitude ratio is derived, not quoted, **and it
+> is wrong**: 1 TB / 5 GB ≈ 200×, i.e. about 2.3 orders of magnitude, not three.
+
+A number that appears in no source, that the builder computed, and that is also incorrect —
+one step away from being copied into the deliverable at level 3. The evaluator then noticed
+that `CLAIM.md` asserted *"No figure, ratio, timing, or version number appears in any OK row
+that is not in its quote"*, and that the grep backing that sentence searches only for
+multipliers and timings, so it **structurally could not** have caught C4.
+
+Three things about that verdict are worth copying into your own evaluator:
+
+- **It says what is not in dispute.** It opens by listing the six criteria it verified and the
+  checks it re-ran, so the rework session does not re-do passing work.
+- **It re-derived rather than read.** It did the arithmetic itself, regenerated the whole
+  transcript with the builder's own script and diffed it, and re-ran the hash reconciliation.
+- **It marks what to leave alone.** A third row was flagged "fair reading — flagged only so you
+  do not spend time on it."
+
+The findings became `NEXT_FINDINGS.md` (3996 bytes) and the wrapper started a fresh builder
+session with them as its work list. `SCOREBOARD.json` stayed `false` for level 2 throughout.
+
 ### What the rubric reviewer caught
 
 The most useful thing in this directory. The planner's rubric was good — it built every
