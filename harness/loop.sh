@@ -31,6 +31,24 @@ LOOPLOG="$LOGDIR/loop.log"
 mkdir -p "$LOGDIR"
 say() { printf '[%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*" | tee -a "$LOOPLOG"; }
 
+# Read the verdict out of an evaluator's output: the first line that is exactly
+# PASS or NEEDS_WORK, ignoring markdown emphasis and surrounding whitespace.
+# Empty means there is no verdict in there at all.
+#
+# Reading only line 1 is not enough. In the first smoke run an evaluator session
+# died on an API error after printing one line of narration; line 1 was
+# "I'll start by reading the core framework files.", the wrapper read that as
+# "not PASS", and handed the API error to the next builder as its work list.
+# A crashed judge and a failing verdict have to be different things.
+read_verdict() {
+  awk '
+    { line = $0
+      gsub(/[`*#[:space:]]/, "", line)   # not _, it is inside NEEDS_WORK
+      if (line == "PASS")       { print "PASS";       exit }
+      if (line == "NEEDS_WORK") { print "NEEDS_WORK"; exit }
+    }' "$1" 2>/dev/null
+}
+
 # --- preflight ---------------------------------------------------------------
 # A domain with no written evidence taxonomy cannot tell finished from claimed,
 # so the loop refuses to start rather than running blind.
@@ -119,7 +137,23 @@ Open every artifact it names and check the claim against what the artifact actua
 Compare against the baseline commit ${before:-HEAD~1}. Return PASS or NEEDS_WORK per your instructions."
 
   claude --agent evaluator -p --model "$EVALUATOR_MODEL" --permission-mode "$PERM_MODE" "$evalprompt" > "$verdictfile" 2>&1
-  verdict=$(head -1 "$verdictfile" | tr -d '\r ' | tr -d '`*#')
+  verdict=$(read_verdict "$verdictfile")
+
+  # An evaluator that CRASHED is not an evaluator that said NEEDS_WORK. Retry once,
+  # then halt -- never turn an infrastructure failure into a review finding.
+  if [ -z "$verdict" ]; then
+    say "cycle $cycle | no verdict in evaluator output -- retrying once"
+    mv "$verdictfile" "${verdictfile%.md}-attempt1.md"
+    claude --agent evaluator -p --model "$EVALUATOR_MODEL" --permission-mode "$PERM_MODE" "$evalprompt" > "$verdictfile" 2>&1
+    verdict=$(read_verdict "$verdictfile")
+  fi
+  if [ -z "$verdict" ]; then
+    say "exit: the evaluator produced no PASS/NEEDS_WORK verdict twice for $level."
+    say "      Its output is in ${verdictfile#$ROOT/}; the level is untouched and the"
+    say "      scoreboard is unchanged. This is an evaluator failure, not a finding --"
+    say "      fix it and re-run rather than sending the builder to chase it."
+    exit 1
+  fi
   say "cycle $cycle | verdict=$verdict | file=${verdictfile#$ROOT/}"
 
   # ---- act on the verdict ----
@@ -132,7 +166,7 @@ Compare against the baseline commit ${before:-HEAD~1}. Return PASS or NEEDS_WORK
   fi
 
   git add -A >/dev/null 2>&1
-  git commit -q -m "loop cycle $cycle: $level -> ${verdict:-NO_VERDICT}" >/dev/null 2>&1
+  git commit -q -m "loop cycle $cycle: $level -> $verdict" >/dev/null 2>&1
   after=$(git rev-parse HEAD 2>/dev/null || echo "")
 
   if [ "$before" = "$after" ] && [ "$verdict" != "PASS" ]; then

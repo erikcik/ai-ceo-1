@@ -151,6 +151,30 @@ if SCOREBOARD_FILE="$WORK/new.json" harness/scoreboard.sh seed "$WORK/seed-bad.j
   fail=$((fail+1)); echo "  FAIL  promoted a seed that was not default-FAIL"
 else pass=$((pass+1)); echo "  ok    refused a seed that was not default-FAIL"; fi
 
+echo "loop: a crashed evaluator is not a NEEDS_WORK verdict"
+# read_verdict lives in loop.sh; source just that function.
+eval "$(awk '/^read_verdict\(\)/,/^}/' harness/loop.sh)"
+rv() { printf '%s' "$1" > "$WORK/v.md"; read_verdict "$WORK/v.md"; }
+if [ "$(rv 'PASS
+one line of why')" = "PASS" ]; then pass=$((pass+1)); echo "  ok    bare PASS on line 1"; else fail=$((fail+1)); echo "  FAIL  bare PASS not read"; fi
+if [ "$(rv 'NEEDS_WORK
+- a finding')" = "NEEDS_WORK" ]; then pass=$((pass+1)); echo "  ok    bare NEEDS_WORK on line 1"; else fail=$((fail+1)); echo "  FAIL  bare NEEDS_WORK not read"; fi
+if [ "$(rv '**PASS**
+convinced by x')" = "PASS" ]; then pass=$((pass+1)); echo "  ok    markdown-emphasised verdict"; else fail=$((fail+1)); echo "  FAIL  **PASS** not read"; fi
+if [ "$(rv 'Let me look at the diff first.
+
+NEEDS_WORK
+- a finding')" = "NEEDS_WORK" ]; then pass=$((pass+1)); echo "  ok    verdict after narration"; else fail=$((fail+1)); echo "  FAIL  verdict after narration missed"; fi
+# The real failure from the first smoke run: narration, then the process died.
+if [ -z "$(rv "I'll start by reading the core framework files.
+API Error: Server error mid-response. The response above may be incomplete.")" ]; then
+  pass=$((pass+1)); echo "  ok    crashed evaluator yields NO verdict, not NEEDS_WORK"
+else fail=$((fail+1)); echo "  FAIL  a crashed evaluator was read as a verdict"; fi
+if [ -z "$(rv '')" ]; then pass=$((pass+1)); echo "  ok    empty output yields no verdict"; else fail=$((fail+1)); echo "  FAIL  empty output produced a verdict"; fi
+if [ -z "$(rv 'The work does not PASS my standards and NEEDS_WORK in places.')" ]; then
+  pass=$((pass+1)); echo "  ok    prose mentioning both words is not a verdict"
+else fail=$((fail+1)); echo "  FAIL  prose was read as a verdict"; fi
+
 echo "memcheck: index entries, not prose mentions"
 MEM="$WORK/mem"; mkdir -p "$MEM"
 printf '# lesson a\n' > "$MEM/a.md"
