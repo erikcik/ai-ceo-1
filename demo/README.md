@@ -127,6 +127,55 @@ actually reached.
 
 ---
 
+## 2b. What the run itself broke
+
+The smoke run found two defects in the harness that no amount of reading it would have
+surfaced. Both are preserved here rather than quietly fixed, because the artifacts are the
+point.
+
+### The builder edited its own acceptance criteria
+
+Seven minutes into cycle 1, `commit-on-stop.sh` checkpointed commit `baab191`, which modified
+`LEVELS.md`. The builder had edited the criteria it was about to be judged against.
+
+The edits were honest — it caught that the operator's scoping decision (5–8 sources, down
+from 8–12) contradicted level 2 and level 3, both of which need ≥6 distinct source keys, so a
+dossier of exactly 5 would pass level 1 and make the later levels unreachable. That is a real
+defect the operator introduced, and the builder caught it.
+
+Beside the point. Nothing distinguished that edit from one that lowers the bar, and the
+evaluator reads `LEVELS.md` fresh every cycle with no memory of what it said at approval.
+`SCOREBOARD.json` being unwritable protected the *verdict* while leaving the *standard* wide
+open. Fixed by [`harness/planlock.sh`](../harness/planlock.sh); verified by probe `15`.
+
+### A crashed evaluator became a builder's work list
+
+In cycle 2 the evaluator session died on an API error after one line of narration, so
+`logs/cycle-2-level-2-verdict-CRASHED.md` reads, in full:
+
+```
+I'll start by reading the core framework files.
+API Error: Server error mid-response. The response above may be incomplete.
+```
+
+`loop.sh` read line 1, saw it was not `PASS`, and did what it was told to do with a non-`PASS`
+verdict: wrote the whole thing to `NEXT_FINDINGS.md` and started a fresh builder session whose
+work list was *"API Error: Server error mid-response."* The garbage even reached git history —
+`git log` in this run contains a commit titled
+`loop cycle 2: level-2 -> I'llstartbyreadingthecoreframeworkfiles.`
+
+An infrastructure failure had been converted into a quality judgement. That is worse than a
+crash: a crash stops you, while this quietly spends a full Opus session on nothing, leaves the
+level failing, and does it again next cycle — an infinite loop that looks like normal
+operation and fills `git log` with what reads as progress.
+
+The general lesson: **any gate that returns a verdict needs a third outcome — *did not run* —
+and it has to stop the loop rather than feed it.** `read_verdict` now scans for a bare `PASS`
+or `NEEDS_WORK` anywhere in the output, and no verdict means retry once then halt, with the
+scoreboard untouched.
+
+---
+
 ## 3. `loop-guards/` — the wrapper's own behaviour
 
 No model sessions at all. `loop-guards/README.md` is captured terminal output showing:
