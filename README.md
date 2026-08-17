@@ -104,8 +104,13 @@ is left. Durable learnings go somewhere else entirely — see below.
 | **`hooks/kill-switch.sh`** | One `touch AGENT_STOP` has to be able to halt everything. |
 | **`hooks/steer.sh`** | Redirecting a running loop shouldn't require restarting it. |
 | **`hooks/commit-on-stop.sh`** | The backstop that catches whatever the agent forgot to commit. |
+| **`.claude/settings.json`** | One file says which hook runs on which event, so the enforcement layer can be read in ten lines. |
+| **`.gitignore`** | Only the hooks' runtime scratch files are excluded; everything a run produces is committed on purpose, because `git log` is the second record. |
 
-If a file isn't in that table, it shouldn't be in the repo.
+If a file isn't in that table, it shouldn't be in the repo. Two exceptions, both about the
+build of this repo rather than the harness itself: `BUILD_PLAN.md` is the plan this rewrite
+was executed against, and `HARNESS_ACCEPTANCE.json` is that plan's own default-FAIL contract
+— the harness applied to its own construction. Neither is used at runtime.
 
 ## Two kinds of memory
 
@@ -150,7 +155,7 @@ read-only to the agent process — and lists the gaps the shipped hooks do not c
 you launch from a subdirectory.
 
 ```bash
-harness/selftest.sh     # 45 assertions over the hook logic — run after editing any gate
+harness/selftest.sh     # 46 assertions over the hook logic — run after editing any gate
 ```
 
 ## Docs

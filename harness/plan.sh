@@ -90,7 +90,7 @@ cat <<EOF
 
 plan: done. Nothing is running yet.
 
-  LEVELS.md         $(grep -cE '^#{2,3} +([0-9]+|level)' LEVELS.md 2>/dev/null || echo '?') level headings
+  LEVELS.md         $(grep -ciE '^#{2,3} +(level|[0-9]+)' LEVELS.md 2>/dev/null || echo '?') level headings
   SCOREBOARD.json   $(harness/scoreboard.sh remaining) rows, all failing (as they should be)
   EVIDENCE.md       the evidence taxonomy for this domain
   RUBRIC.md         how the evaluator scores
