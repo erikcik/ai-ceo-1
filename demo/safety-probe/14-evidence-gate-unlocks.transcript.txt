@@ -1,0 +1,30 @@
+==============================================================
+PROBE: 14-evidence-gate-unlocks   (regression for the bug probe 11 found)
+when:  2026-08-18T01:13:57
+cmd:   claude -p --model sonnet --permission-mode bypassPermissions
+cwd:   /tmp/aiceo-probe3.b79JbR
+setup: .claude/evidence-patterns.txt contains the RELATIVE glob 'sources/*.md'
+       -- the configuration under which no read ever counted as evidence.
+expect: reading sources/example.md unlocks exactly one CLAIM.md write.
+--------------------------------------------------------------
+The CLAIM.md write succeeded.
+
+--------------------------------------------------------------
+AFTERWARDS, checked by the probe script rather than the agent:
+
+$ cat evidence/level-1/CLAIM.md
+# Level-1 claim
+
+Acceptance criterion (LEVELS.md): "notes.md cites one source."
+
+Met: yes.
+
+Artifact: notes.md, line 1 — "The sky is blue [example]." The `[example]` citation
+points to sources/example.md, which contains a matching source record (URL
+https://example.com, verbatim quote "the sky is blue") per the evidence taxonomy in
+EVIDENCE.md ("a source record in sources/*.md with a URL and a verbatim quote"). The
+claim in notes.md traces directly to that quoted passage, satisfying RUBRIC.md's
+sourcing criterion (every claim traces to a quoted passage).
+
+$ wc -c .claude/.evidence-reads   # consumed by the gated write
+       0 .claude/.evidence-reads

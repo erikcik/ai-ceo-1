@@ -18,12 +18,20 @@ path=$(cat | python3 -c 'import json,sys; print(json.load(sys.stdin).get("tool_i
 [ -f "$path" ] || exit 0
 [ -f "$patterns" ] || exit 0
 
+# The Read tool reports an ABSOLUTE path, but a taxonomy is naturally written in
+# project-relative globs ("sources/*.md"). Matching only one form is a silent
+# deadlock: no read ever counts, so the evidence gate can never be satisfied and
+# no level can ever be claimed. So test both forms of the path against each glob.
+root="${CLAUDE_PROJECT_DIR:-$PWD}"
+rel="${path#"$root"/}"
+rel="${rel#./}"
+
 # One shell glob per line; blank lines and # comments ignored.
 while IFS= read -r glob; do
   case "$glob" in ''|'#'*) continue ;; esac
   # shellcheck disable=SC2254
-  case "$path" in
-    $glob) printf '%s\n' "$path" >> "$log"; break ;;
-  esac
+  case "$path" in $glob) printf '%s\n' "$path" >> "$log"; exit 0 ;; esac
+  # shellcheck disable=SC2254
+  case "$rel"  in $glob) printf '%s\n' "$path" >> "$log"; exit 0 ;; esac
 done < "$patterns"
 exit 0

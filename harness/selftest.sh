@@ -87,16 +87,26 @@ run BLOCK verify-gate.sh "$(write_call 'evidence/level-1/CLAIM.md')"            
 run ALLOW verify-gate.sh "$(write_call 'report.md')"                                "Write ordinary file"
 
 echo "track-read: records only what the domain calls evidence"
-printf 'sources/*.md\n*/quotes/*.md\n' > "$WORK/evidence-patterns.txt"
-: > "$WORK/.evidence-reads"
-touch "$WORK/src.md"
-printf '%s\n' "$WORK/*.md" >> "$WORK/evidence-patterns.txt"
-printf '%s' "$(read_call "$WORK/src.md")" | VERIFY_READ_LOG="$WORK/.evidence-reads" EVIDENCE_PATTERNS="$WORK/evidence-patterns.txt" .claude/hooks/track-read.sh
-if [ -s "$WORK/.evidence-reads" ]; then pass=$((pass+1)); echo "  ok    RECORD matching file recorded"; else fail=$((fail+1)); echo "  FAIL  matching file not recorded"; fi
-: > "$WORK/.evidence-reads"
-touch "$WORK/notes.txt"
-printf '%s' "$(read_call "$WORK/notes.txt")" | VERIFY_READ_LOG="$WORK/.evidence-reads" EVIDENCE_PATTERNS="$WORK/evidence-patterns.txt" .claude/hooks/track-read.sh
+# RELATIVE globs on purpose. The Read tool reports absolute paths, so a hook that
+# only matches the string it is given records nothing and deadlocks the loop --
+# a real bug this suite missed until a fresh-session probe hit it, because the
+# original test used an absolute glob.
+printf 'sources/*.md\nquotes/*.md\n' > "$WORK/evidence-patterns.txt"
+mkdir -p "$WORK/sources"
+touch "$WORK/sources/src.md" "$WORK/notes.txt"
+tr_read() {  # $1 = absolute path the Read tool would report
+  : > "$WORK/.evidence-reads"
+  printf '%s' "$(read_call "$1")" | \
+    CLAUDE_PROJECT_DIR="$WORK" VERIFY_READ_LOG="$WORK/.evidence-reads" \
+    EVIDENCE_PATTERNS="$WORK/evidence-patterns.txt" .claude/hooks/track-read.sh
+}
+tr_read "$WORK/sources/src.md"
+if [ -s "$WORK/.evidence-reads" ]; then pass=$((pass+1)); echo "  ok    RECORD absolute path vs relative glob"; else fail=$((fail+1)); echo "  FAIL  absolute path did not match a relative glob"; fi
+tr_read "$WORK/notes.txt"
 if [ -s "$WORK/.evidence-reads" ]; then fail=$((fail+1)); echo "  FAIL  non-evidence file was recorded"; else pass=$((pass+1)); echo "  ok    IGNORE non-evidence file ignored"; fi
+printf '%s/sources/*.md\n' "$WORK" > "$WORK/evidence-patterns.txt"
+tr_read "$WORK/sources/src.md"
+if [ -s "$WORK/.evidence-reads" ]; then pass=$((pass+1)); echo "  ok    RECORD absolute path vs absolute glob"; else fail=$((fail+1)); echo "  FAIL  absolute glob no longer matches"; fi
 
 echo "kill-switch: halts everything while AGENT_STOP exists"
 touch "$WORK/AGENT_STOP"

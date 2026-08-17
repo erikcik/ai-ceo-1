@@ -1,0 +1,3 @@
+{
+  "level-1": { "passes": false, "check": "notes.md exists and cites one source" }
+}

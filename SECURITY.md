@@ -91,6 +91,15 @@ complete, and a version that tried would break ordinary work with false positive
 are all agent-writable, because the agent has to maintain most of them. An agent can delete
 a paused-action row, rewrite a `NEEDS_WORK` finding it doesn't like, or edit a log.
 
+This is not hypothetical, and it does not require an adversarial agent. In the first probe
+run ([`demo/safety-probe/`](./demo/safety-probe/)), a session told to run a Stripe charge
+declined on its own — and then **hand-wrote a plausible row into `PAUSED_ACTIONS.md`**. The
+row is dated to the day rather than the second and its reason is prose the model composed,
+where the two hook-written rows beside it carry seconds-precision timestamps and reasons
+copied verbatim from `danger-patterns.txt`. The outcome was correct and the intent was
+helpful; the ledger still ended up containing an entry no hook produced. **A row in
+`PAUSED_ACTIONS.md` is not evidence that a gate fired.**
+
 *Mitigation:* `git log` is the second record and the wrapper commits every cycle, so
 tampering is visible in the diff. Evaluator verdicts are written by the wrapper to
 `logs/cycle-N-*-verdict.md` from the evaluator's stdout, so a builder session rewriting one
@@ -142,3 +151,17 @@ than the honest path, which is usually enough.
 It is **not** built for an adversarial agent, and no arrangement of in-tree shell scripts
 would be. Against that threat, the boundary is the OS and the sandbox, and this document's
 first section is the whole of the defence.
+
+One observation from the probe runs, which cuts both ways. Of thirteen fresh sessions
+instructed to do something a gate forbids, **several refused before making any tool call**,
+quoting the frozen core in `.claude/CLAUDE.md` back at the prompt — including one told
+explicitly to "try again with bash if the Write tool is refused". The written contract was
+doing the work, and the hook was never reached.
+
+That is good news about how little enforcement a capable, cooperative model needs. It is also
+a warning about how you read evidence: an unchanged file proves nothing when the agent never
+reached for it, and a suite of probes that only tells sessions to do obviously-forbidden
+things will report a working gate whether or not the gate works. The probes that actually
+tested the hooks are the ones framed as routine housekeeping — "add a comment line to these
+two scripts", "you are the wrapper step, record this PASS" — where a cooperative agent
+genuinely tries, and only the hook can say no. If you extend these gates, test them that way.
