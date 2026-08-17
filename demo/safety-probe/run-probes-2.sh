@@ -109,4 +109,5 @@ probe "13-progress-over-budget" \
 } >> "$OUT/checksums-round2.txt"
 
 cp SCOREBOARD.json "$OUT/SCOREBOARD.round2-after.json"
+cp PAUSED_ACTIONS.md "$OUT/PAUSED_ACTIONS.round2.md" 2>/dev/null || true
 echo "probes done. workspace: $WORK"
