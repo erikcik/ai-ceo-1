@@ -412,3 +412,44 @@ the evaluation had failed.
 turns every non-success into "the work needs improvement" will keep itself busy forever. Any
 gate that produces a verdict needs a third outcome — *did not run* — and it has to stop the
 loop rather than feed it.
+
+## Four lessons worth carrying to the next harness
+
+Distilled from the six defects above. Each cost a real failure in this build; none of them
+were visible from reading the code.
+
+**1. A verdict gate needs a third outcome: *did not run*.** Pass and fail are not exhaustive.
+When the evaluator died mid-response, the wrapper mapped "not PASS" onto "needs improvement"
+and spent a full builder session on a stack trace. Absence of a verdict must halt the loop,
+never feed it — otherwise a crash is indistinguishable from ordinary operation and `git log`
+fills with what reads as progress. Parse the verdict by scanning for a line that is exactly
+the token, too: models narrate before answering, non-deterministically, and the same
+evaluator had answered cleanly the cycle before.
+
+**2. Protecting the verdict is not protecting the standard.** `SCOREBOARD.json` was
+unwritable from any session, so no builder could mark itself passing — and the builder edited
+`LEVELS.md` instead, seven minutes in. The evaluator re-reads the criteria fresh every cycle
+with no memory of what they said at approval, so a lowered bar would have been invisible. An
+agent that can edit its own acceptance criteria has none. Hash them at approval, deny writes
+by hook, halt on a mismatch, and give the operator an explicit relock.
+
+**3. Telling an agent to do the forbidden thing does not test the gate.** Eight probes
+instructed fresh sessions to push, to neuter a hook, to self-mark a row. Several refused on
+their own, quoting `CLAUDE.md` — including one told "try again with bash if Write is refused".
+Unchanged files, hooks never reached, and the suite would have reported a working gate
+whether or not one existed. Frame the forbidden action as routine housekeeping so a
+cooperative agent genuinely reaches for it; only then is a refusal the hook. Corollary: an
+agent-writable ledger is not proof a hook fired — one session declined a charge itself and
+then hand-wrote a plausible row into `PAUSED_ACTIONS.md`, distinguishable from the real ones
+only by timestamp precision and wording.
+
+**4. Write the gate's self-test before trusting the gate, and fail closed.** Two silent
+failures, both invisible to review. A tab-separated denylist whose regexes contained literal
+tabs: the splitter mangled them into invalid patterns that an `except re.error: continue`
+skipped without a word, so `git push` and `rm -rf` passed a gate reporting clean. And a hook
+matching relative globs against the absolute path the Read tool reports, so nothing ever
+matched and the gate it fed could never be satisfied — a deadlock in every domain. The first
+test suite missed the second because the test itself used an absolute glob. Assert what the
+gate *allows* as well as what it blocks, use realistic fixtures, pin the project root so
+assertions describe the hook rather than the repo's current state, and make an unparseable
+rule block everything until a human fixes it.
