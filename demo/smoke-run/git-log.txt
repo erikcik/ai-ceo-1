@@ -1,0 +1,273 @@
+a243fff 2026-08-18 03:18:24 +0300 loop cycle 4: level-4 -> PASS
+ SCOREBOARD.json                 |  7 +++++--
+ logs/cycle-4-level-4-build.log  | 19 +++++++++++++++++++
+ logs/cycle-4-level-4-verdict.md | 15 +++++++++++++++
+ logs/loop.log                   |  2 ++
+ 4 files changed, 41 insertions(+), 2 deletions(-)
+
+dcf25f1 2026-08-18 03:18:23 +0300 session checkpoint: 2026-08-18 03:18
+ logs/loop.log | 2 ++
+ 1 file changed, 2 insertions(+)
+
+4d66e67 2026-08-18 03:15:37 +0300 session checkpoint: 2026-08-18 03:15
+ logs/loop.log | 1 +
+ 1 file changed, 1 insertion(+)
+
+a8e28c1 2026-08-18 03:15:14 +0300 level-4: audit every body sentence, not every citation; weaken two absence claims the checks refuted
+ PAUSED_ACTIONS.md                          |   1 +
+ PROGRESS.md                                | 157 ++++----
+ REPORT.md                                  |   6 +-
+ evidence/level-3/verify.txt                |   9 +-
+ evidence/level-3/wordcount.txt             |   2 +-
+ evidence/level-4/CLAIM.md                  | 186 ++++++++++
+ evidence/level-4/citation-audit.md         | 121 ++++++
+ evidence/level-4/make-level4-checks.sh     | 573 +++++++++++++++++++++++++++++
+ evidence/level-4/verify.txt                | 471 ++++++++++++++++++++++++
+ memory/INDEX.md                            |  15 +-
+ memory/auditing-a-finished-cited-report.md |  64 ++++
+ memory/session-tooling-gotchas.md          |   7 +
+ memory/web-capture-recipe.md               |   5 +-
+ 13 files changed, 1525 insertions(+), 92 deletions(-)
+
+ca8f00f 2026-08-18 02:59:42 +0300 loop cycle 3: level-3 -> PASS
+ SCOREBOARD.json                 |  7 +++++--
+ logs/cycle-3-level-3-build.log  | 34 ++++++++++++++++++++++++++++++++++
+ logs/cycle-3-level-3-verdict.md | 13 +++++++++++++
+ logs/loop.log                   |  2 ++
+ 4 files changed, 54 insertions(+), 2 deletions(-)
+
+3906841 2026-08-18 02:59:41 +0300 session checkpoint: 2026-08-18 02:59
+ logs/loop.log | 2 ++
+ 1 file changed, 2 insertions(+)
+
+0b861df 2026-08-18 02:57:16 +0300 session checkpoint: 2026-08-18 02:57
+ logs/loop.log | 1 +
+ 1 file changed, 1 insertion(+)
+
+eb66703 2026-08-18 02:57:02 +0300 level-3: write REPORT.md (1186 body words) from the claim map, with generated coverage and verification
+ PROGRESS.md                                  | 196 +++++------
+ REPORT.md                                    | 163 +++++++++
+ evidence/level-3/CLAIM.md                    | 166 ++++++++++
+ evidence/level-3/claim-coverage.md           |  67 ++++
+ evidence/level-3/make-level3-checks.sh       | 335 +++++++++++++++++++
+ evidence/level-3/verify.txt                  | 473 +++++++++++++++++++++++++++
+ evidence/level-3/wordcount.txt               |  13 +
+ memory/INDEX.md                              |   8 +-
+ memory/session-tooling-gotchas.md            |  17 +-
+ memory/writing-a-word-banded-cited-report.md |  45 +++
+ 10 files changed, 1363 insertions(+), 120 deletions(-)
+
+c8dec3a 2026-08-18 02:36:44 +0300 loop cycle 2: level-2 -> PASS
+ NEXT_FINDINGS.md                |  7 -------
+ SCOREBOARD.json                 |  7 +++++--
+ logs/cycle-2-level-2-verdict.md | 17 +++++++++++++++++
+ logs/loop.log                   |  2 ++
+ 4 files changed, 24 insertions(+), 9 deletions(-)
+
+f50e678 2026-08-18 02:36:43 +0300 session checkpoint: 2026-08-18 02:36
+ logs/cycle-2-level-2-build.log | 13 +++++++++++++
+ logs/loop.log                  |  2 ++
+ 2 files changed, 15 insertions(+)
+
+3e7652c 2026-08-18 02:34:24 +0300 level-2: clear NEXT_FINDINGS -- drop C4's derived ratio and C13's unsourced clause, replace the smuggled-number grep with an exhaustive per-number audit
+ PROGRESS.md                          |  51 ++++++++++++++----
+ claims/claim-map.md                  |   7 +--
+ evidence/level-2/CLAIM.md            | 101 +++++++++++++++++++++++++++--------
+ evidence/level-2/make-map-check.sh   |  28 +++++++++-
+ evidence/level-2/map-check.txt       |  50 +++++++++++++++--
+ logs/cycle-2-level-2-build.log       |  23 +-------
+ logs/loop.log                        |   1 +
+ memory/INDEX.md                      |   7 ++-
+ memory/machine-checked-claim-maps.md |  23 +++++++-
+ memory/session-tooling-gotchas.md    |  27 ++++++++++
+ 10 files changed, 256 insertions(+), 62 deletions(-)
+
+5e333c0 2026-08-18 02:22:33 +0300 loop cycle 1: level-2 -> NEEDS_WORK
+ NEXT_FINDINGS.md                | 7 +++++++
+ logs/cycle-1-level-2-verdict.md | 7 +++++++
+ logs/loop.log                   | 2 ++
+ 3 files changed, 16 insertions(+)
+
+6016779 2026-08-18 02:22:32 +0300 session checkpoint: 2026-08-18 02:22
+ logs/cycle-1-level-2-build.log | 12 ++++++++++++
+ logs/loop.log                  |  2 ++
+ 2 files changed, 14 insertions(+)
+
+f7d9848 2026-08-18 02:18:24 +0300 level-2: re-verify claim map from disk, generate transcript from a script
+ PROGRESS.md                                        |  44 +++-
+ claims/claim-map.md                                |  21 +-
+ evidence/level-2/CLAIM.md                          | 130 ++++++++----
+ evidence/level-2/make-map-check.sh                 | 190 +++++++++++++++++
+ evidence/level-2/map-check.txt                     | 224 ++++++++++++++-------
+ logs/cycle-1-level-2-build.log                     |   4 +
+ logs/loop.log                                      |   3 +
+ memory/INDEX.md                                    |   9 +-
+ memory/frozen-guard-blocks-bash-not-just-writes.md |  36 ++++
+ memory/machine-checked-claim-maps.md               |  19 +-
+ 10 files changed, 552 insertions(+), 128 deletions(-)
+
+fb91d2f 2026-08-18 02:08:37 +0300 operator: adopt plan lock mid-run (locks LEVELS/RUBRIC/EVIDENCE as they now stand)
+ .claude/hooks/frozen-guard.sh | 48 ++++++++++++++++++++++++++----
+ .claude/plan-lock.sha256      |  9 ++++++
+ harness/planlock.sh           | 69 +++++++++++++++++++++++++++++++++++++++++++
+ 3 files changed, 120 insertions(+), 6 deletions(-)
+
+303f0cb 2026-08-18 02:08:14 +0300 operator: halt after evaluator crash; wrapper fixed, garbage findings discarded
+ harness/loop.sh                                    | 51 +++++++++++-
+ harness/memcheck.sh                                | 13 ++-
+ harness/selftest.sh                                | 94 +++++++++++++++++++---
+ .../cycle-2-level-2-verdict-CRASHED.md             |  0
+ logs/cycle-2-level-2-verdict.md                    |  2 -
+ logs/loop.log                                      |  1 +
+ 6 files changed, 146 insertions(+), 15 deletions(-)
+
+14d7f4c 2026-08-18 02:06:20 +0300 loop cycle 2: level-2 -> I'llstartbyreadingthecoreframeworkfiles.
+ NEXT_FINDINGS.md                |  2 ++
+ logs/cycle-2-level-2-build.log  | 21 +++++++++++++++++++++
+ logs/cycle-2-level-2-verdict.md |  2 ++
+ logs/loop.log                   |  4 ++++
+ 4 files changed, 29 insertions(+)
+
+8bc6655 2026-08-18 02:03:46 +0300 level-2: comparison dimensions and claim -> source map
+ PROGRESS.md                                        | 115 +++--
+ claims/claim-map.md                                | 117 +++++
+ claims/dimensions.md                               | 182 +++++++
+ claims/gaps.md                                     | 145 ++++++
+ evidence/level-2/CLAIM.md                          | 211 ++++++++
+ evidence/level-2/map-check.txt                     | 453 +++++++++++++++++
+ logs/cycle-2-level-2-build.log                     |   4 +
+ logs/loop.log                                      |   1 +
+ memory/INDEX.md                                    |   8 +-
+ memory/duckdb-org-capture-gotchas.md               |  12 +-
+ memory/machine-checked-claim-maps.md               |  46 ++
+ sources/CAPTURE_LOG.md                             |  50 ++
+ .../probe-duckdb-gh-release-1-0-0.headers.txt      |  28 ++
+ sources/rejected/probe-duckdb-gh-release-1-0-0.src | 560 +++++++++++++++++++++
+ 14 files changed, 1877 insertions(+), 55 deletions(-)
+
+5dcccd4 2026-08-18 01:50:04 +0300 loop cycle 1: level-1 -> PASS
+ SCOREBOARD.json                 |  7 +++++--
+ logs/cycle-1-level-1-build.log  | 20 ++++++++++++++++++++
+ logs/cycle-1-level-1-verdict.md | 15 +++++++++++++++
+ logs/loop.log                   |  7 +++++++
+ 4 files changed, 47 insertions(+), 2 deletions(-)
+
+5c31009 2026-08-18 01:47:04 +0300 level-1: primary source dossier (8 entries, 24 verified quotes)
+ PAUSED_ACTIONS.md                                  |    9 +
+ PROGRESS.md                                        |   76 +
+ claims/excluded-sources.md                         |  119 +
+ evidence/level-1/CLAIM.md                          |  208 +
+ evidence/level-1/quote-check.txt                   |  220 +
+ memory/INDEX.md                                    |   21 +
+ memory/duckdb-org-capture-gotchas.md               |   38 +
+ memory/machine-network-blocks-observed.md          |   25 +
+ memory/papers-must-print-their-own-date.md         |   29 +
+ memory/quote-verbatim-from-extracted-text.md       |   29 +
+ .../sqlite-org-pages-are-ideal-primary-sources.md  |   34 +
+ memory/web-capture-recipe.md                       |   43 +
+ sources/.fetchlog.tmp                              |    9 +
+ sources/CAPTURE_LOG.md                             |  215 +
+ sources/duckdb-cidr20.md                           |   36 +
+ sources/duckdb-pvldb-hashjoin.md                   |   38 +
+ sources/duckdb-sigmod19.md                         |   37 +
+ sources/raw/duckdb-cidr20.headers.txt              |   18 +
+ sources/raw/duckdb-cidr20.src                      |  Bin 0 -> 197233 bytes
+ sources/raw/duckdb-cidr20.txt                      |  654 ++
+ sources/raw/duckdb-pvldb-hashjoin.headers.txt      |    8 +
+ sources/raw/duckdb-pvldb-hashjoin.src              |  Bin 0 -> 1756396 bytes
+ sources/raw/duckdb-pvldb-hashjoin.txt              | 1556 ++++
+ sources/raw/duckdb-sigmod19.headers.txt            |   18 +
+ sources/raw/duckdb-sigmod19.src                    |  Bin 0 -> 974371 bytes
+ sources/raw/duckdb-sigmod19.txt                    |  376 +
+ sources/raw/sqlite-changes.headers.txt             |    9 +
+ sources/raw/sqlite-changes.src                     | 7838 ++++++++++++++++++++
+ sources/raw/sqlite-changes.txt                     | 4365 +++++++++++
+ sources/raw/sqlite-cli.headers.txt                 |    9 +
+ sources/raw/sqlite-cli.src                         | 1953 +++++
+ sources/raw/sqlite-cli.txt                         | 1039 +++
+ sources/raw/sqlite-lts.headers.txt                 |    9 +
+ sources/raw/sqlite-lts.src                         |  241 +
+ sources/raw/sqlite-lts.txt                         |   50 +
+ sources/raw/sqlite-wal.headers.txt                 |    9 +
+ sources/raw/sqlite-wal.src                         |  831 +++
+ sources/raw/sqlite-wal.txt                         |  264 +
+ sources/raw/sqlite-whentouse.headers.txt           |    9 +
+ sources/raw/sqlite-whentouse.src                   |  547 ++
+ sources/raw/sqlite-whentouse.txt                   |  162 +
+ .../rejected/excluded-betterstack-vs.headers.txt   |   26 +
+ sources/rejected/excluded-betterstack-vs.src       | 2979 ++++++++
+ sources/rejected/excluded-betterstack-vs.txt       |  766 ++
+ sources/rejected/excluded-datacamp-vs.headers.txt  |   22 +
+ sources/rejected/excluded-datacamp-vs.src          |    1 +
+ sources/rejected/excluded-datacamp-vs.txt          |    1 +
+ .../rejected/excluded-lukasbarth-bench.headers.txt |   12 +
+ sources/rejected/excluded-lukasbarth-bench.src     |  119 +
+ sources/rejected/excluded-lukasbarth-bench.txt     |  196 +
+ .../rejected/excluded-motherduck-vs.headers.txt    |    0
+ sources/rejected/excluded-posthog-vs.headers.txt   |   18 +
+ sources/rejected/excluded-posthog-vs.src           |  133 +
+ sources/rejected/excluded-posthog-vs.txt           |  218 +
+ sources/rejected/excluded-why-duckdb.headers.txt   |   15 +
+ sources/rejected/excluded-why-duckdb.src           | 1645 ++++
+ sources/rejected/excluded-why-duckdb.txt           |  103 +
+ sources/sqlite-changes.md                          |   33 +
+ sources/sqlite-cli.md                              |   29 +
+ sources/sqlite-lts.md                              |   30 +
+ sources/sqlite-wal.md                              |   33 +
+ sources/sqlite-whentouse.md                        |   34 +
+ 62 files changed, 27564 insertions(+)
+
+baab191 2026-08-18 01:18:59 +0300 session checkpoint: 2026-08-18 01:18
+ LEVELS.md                 | 14 +++++++++-----
+ SCOREBOARD_CHECK_PATCH.md |  8 ++++++++
+ 2 files changed, 17 insertions(+), 5 deletions(-)
+
+d418006 2026-08-18 01:17:32 +0300 operator: apply rubric review findings, scoreboard check patch, scoping
+ .claude/hooks/track-read.sh |  14 ++-
+ EVIDENCE.md                 | 103 +++++++++++++++++---
+ LEVELS.md                   | 114 ++++++++++++++++------
+ OPERATOR_NOTES.md           |  30 ++++++
+ RUBRIC.md                   | 226 ++++++++++++++++++++++++++++++++++++--------
+ SCOREBOARD.json             |   2 +-
+ SCOREBOARD_CHECK_PATCH.md   |  44 +++++++++
+ 7 files changed, 444 insertions(+), 89 deletions(-)
+
+1c407f0 2026-08-18 01:10:03 +0300 init: plan artifacts for this task (rubric review: REVISE)
+ .claude/agents/evaluator.addendum.md |  73 +++++++++++++
+ .claude/evidence-patterns.txt        |  34 ++++++
+ EVIDENCE.md                          | 166 ++++++++++++++++++++++++++++
+ INIT_PROMPT.md                       |  14 +++
+ INIT_PROMPT_SOURCE.md                |  14 +++
+ LEVELS.md                            | 169 +++++++++++++++++++++++++++++
+ RUBRIC.md                            | 203 +++++++++++++++++++++++++++++++++++
+ RUBRIC_REVIEW.md                     | 163 ++++++++++++++++++++++++++++
+ SCOREBOARD.json                      |  18 ++++
+ logs/plan-planner.log                |  31 ++++++
+ 10 files changed, 885 insertions(+)
+
+d0e08b7 2026-08-18 01:10:01 +0300 session checkpoint: 2026-08-18 01:10
+ .claude/agents/evaluator.md | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+45509a9 2026-08-18 01:00:47 +0300 harness at smoke-test start
+ .claude/CLAUDE.md                 | 106 +++++++++++++++++++++++++++
+ .claude/agents/evaluator.md       |  70 ++++++++++++++++++
+ .claude/agents/planner.md         | 130 +++++++++++++++++++++++++++++++++
+ .claude/agents/rubric-reviewer.md |  48 +++++++++++++
+ .claude/hooks/commit-on-stop.sh   |  17 +++++
+ .claude/hooks/danger-patterns.txt |  52 ++++++++++++++
+ .claude/hooks/frozen-guard.sh     |  87 +++++++++++++++++++++++
+ .claude/hooks/kill-switch.sh      |   9 +++
+ .claude/hooks/progress-budget.sh  |  36 ++++++++++
+ .claude/hooks/safety-gate.sh      | 100 ++++++++++++++++++++++++++
+ .claude/hooks/steer.sh            |  14 ++++
+ .claude/hooks/track-read.sh       |  29 ++++++++
+ .claude/hooks/verify-gate.sh      |  51 +++++++++++++
+ .claude/settings.json             |  46 ++++++++++++
+ .gitignore                        |   3 +
+ harness/loop.sh                   | 129 +++++++++++++++++++++++++++++++++
+ harness/memcheck.sh               |  60 ++++++++++++++++
+ harness/plan.sh                   | 105 +++++++++++++++++++++++++++
+ harness/scoreboard.sh             |  97 +++++++++++++++++++++++++
+ harness/selftest.sh               | 146 ++++++++++++++++++++++++++++++++++++++
+ 20 files changed, 1335 insertions(+)

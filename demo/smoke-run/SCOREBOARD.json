@@ -1,0 +1,30 @@
+{
+  "level-1": {
+    "passes": true,
+    "check": "sources/ holds 5-8 entry files sources/<key>.md, each with a complete EVIDENCE.md 1.1 header (key, subject, title, publisher, source_type, url, dated, dated_locator, accessed, capture_file, sha256) and >=2 verbatim quotes labeled Q1.. of <=75 words, each a contiguous span of >=12 words containing at least one complete sentence of body prose and each with a locator; >=2 entries subject=sqlite and >=2 subject=duckdb; source_type set includes >=1 paper and >=1 release-notes; scenario coverage present for larger-than-memory behaviour, write concurrency, ingest formats, and file format/durability; every entry has BOTH sources/raw/<key>.src (bytes as fetched, unedited) AND sources/raw/<key>.txt (text extracted from it), plus sources/raw/<key>.headers.txt holding the response headers as fetched including Date, Content-Type, and Content-Length or Last-Modified/ETag; each capture sha256 matches the entry header and sources/CAPTURE_LOG.md, and no capture is a redirect stub, an empty body, or a hand-composed document rather than fetched bytes; sources/CAPTURE_LOG.md records per capture URL, UTC timestamp, exact fetch command, HTTP status, byte size, sha256, and the exact extraction command such that re-running it on the .src reproduces the .txt, plus failed fetches and failed extractions with their error output and the decision taken; evidence/level-1/quote-check.txt shows the canonical tr/grep -F -c command and its output with count >=1 for every quote, written as copy-pasteable one-liners, plus a grep of each entry dated value against its own capture with output; a quote is grep-exempt only with the attempted extraction command and its failing output logged and a PDF page number cited, and at most 2 entries and at most 25% of quotes may be exempt; claims/excluded-sources.md lists >=2 rejected non-primary documents, each with URL, the EVIDENCE.md section 3 clause, and the observed fact that triggers it, at least one of which appears in sources/CAPTURE_LOG.md as a fetch that was made and then rejected.",
+    "evidence": "evidence/level-1/ (see logs/cycle-1-level-1-verdict.md)",
+    "verdict_file": "/tmp/aiceo-smoke/logs/cycle-1-level-1-verdict.md",
+    "confirmed_at": "2026-08-18T01:50:04"
+  },
+  "level-2": {
+    "passes": true,
+    "check": "claims/dimensions.md names 6-9 comparison dimensions each justified in 1-2 sentences against the ~5 GB laptop analytical scenario; claims/claim-map.md is a table with >=14 rows, columns claim id / dimension / one-sentence claim / system / key#Qn / verbatim quote fragment, covering every dimension at least once and both systems; every referenced key exists in sources/ and every Qn exists in that entry, demonstrated by commands and output in evidence/level-2/map-check.txt; claims/gaps.md lists >=3 questions the primary sources do not answer and states they will not be asserted; no claim row cites a document from claims/excluded-sources.md or asserts content absent from its cited quote.",
+    "evidence": "evidence/level-2/ (see logs/cycle-2-level-2-verdict.md)",
+    "verdict_file": "/tmp/aiceo-smoke/logs/cycle-2-level-2-verdict.md",
+    "confirmed_at": "2026-08-18T02:36:44"
+  },
+  "level-3": {
+    "passes": true,
+    "check": "REPORT.md exists with body word count 900-1200 as measured by awk '/^## Sources/{exit} {print}' REPORT.md | wc -w, recorded with output in evidence/level-3/wordcount.txt; report is addressed to a developer choosing for ~5 GB local analytics and contains an explicit recommendation section stating conditions favoring each system; every substantive claim carries an inline [key] citation and a ## Sources section lists each cited key with title, publisher, URL, document date and access date matching sources/<key>.md; >=6 distinct keys cited and all exist in sources/; >=12 claim rows from claims/claim-map.md appear, mapped in evidence/level-3/claim-coverage.md as report location -> claim id -> key#Qn; a 'Limits of this comparison' passage reflects claims/gaps.md; git diff for the level contains no code, database files, or benchmark output.",
+    "evidence": "evidence/level-3/ (see logs/cycle-3-level-3-verdict.md)",
+    "verdict_file": "/tmp/aiceo-smoke/logs/cycle-3-level-3-verdict.md",
+    "confirmed_at": "2026-08-18T02:59:42"
+  },
+  "level-4": {
+    "passes": true,
+    "check": "evidence/level-4/citation-audit.md has one row per substantive sentence of final REPORT.md giving line number + first ~8 words, key#Qn, PASS/FAIL, and note, with every row PASS or naming the edit that made it pass; evidence/level-4/verify.txt shows re-run output of the canonical quote check for every quote the report cites, shasum -a 256 over sources/raw/* reconciled against sources/CAPTURE_LOG.md, and the body word count command; every claim that failed re-verification was removed or weakened in REPORT.md with the edit named in the audit; final REPORT.md still 900-1200 body words with recommendation, resolving citations, and >=6 distinct keys; evidence/level-4/CLAIM.md names residual risks including single-source and version-dependent claims.",
+    "evidence": "evidence/level-4/ (see logs/cycle-4-level-4-verdict.md)",
+    "verdict_file": "/tmp/aiceo-smoke/logs/cycle-4-level-4-verdict.md",
+    "confirmed_at": "2026-08-18T03:18:24"
+  }
+}

@@ -1,0 +1,220 @@
+# evidence/level-1/quote-check.txt — canonical quote and date checks for the level-1 dossier
+#
+# Every line beginning with `tr -s` is a copy-pasteable one-liner. Run it unmodified from the
+# repository root; the line immediately below it is the output this session recorded.
+# Canonical form is EVIDENCE.md 1.4:  tr -s '[:space:]' ' ' < sources/raw/<key>.txt | grep -F -c "<quote>"
+# A quote passes at count >= 1 after whitespace normalisation.
+#
+# For each entry the DATE check comes first: it greps the `dated:` value's printed form against
+# the same capture, which is what makes `dated` locatable rather than asserted (EVIDENCE.md 1.1).
+# NO QUOTE IN THIS DOSSIER IS GREP-EXEMPT: all 8 captures extracted to text cleanly, so the
+# PDF page-number exemption of LEVELS.md L1 criterion 4 is not used at all (0 of 24 quotes).
+#
+# Generated: 2026-08-17 UTC (session local date 2026-08-18).
+
+
+===== sqlite-whentouse =====
+
+--- dated_locator check (sqlite-whentouse) ---
+tr -s '[:space:]' ' ' < sources/raw/sqlite-whentouse.txt | grep -F -c "This page was last updated on 2025-05-31"
+1
+
+--- Q1 ---
+tr -s '[:space:]' ' ' < sources/raw/sqlite-whentouse.txt | grep -F -c "SQLite supports an unlimited number of simultaneous readers, but it will only allow one writer at any instant in time."
+1
+
+--- Q2 ---
+tr -s '[:space:]' ' ' < sources/raw/sqlite-whentouse.txt | grep -F -c "And even if it could handle larger databases, SQLite stores the entire database in a single disk file and many filesystems limit the maximum size of files to something less than this."
+1
+
+--- Q3 ---
+tr -s '[:space:]' ' ' < sources/raw/sqlite-whentouse.txt | grep -F -c "People who understand SQL can employ the sqlite3 command-line shell (or various third-party SQLite access programs) to analyze large datasets. Raw data can be imported from CSV files, then that data can be sliced and diced to generate a myriad of summary reports."
+1
+
+--- Q4 ---
+tr -s '[:space:]' ' ' < sources/raw/sqlite-whentouse.txt | grep -F -c "For device-local storage with low writer concurrency and less than a terabyte of content, SQLite is almost always a better solution."
+1
+
+
+===== sqlite-wal =====
+
+--- dated_locator check (sqlite-wal) ---
+tr -s '[:space:]' ' ' < sources/raw/sqlite-wal.txt | grep -F -c "This page was last updated on 2026-04-13"
+1
+
+--- Q1 ---
+tr -s '[:space:]' ' ' < sources/raw/sqlite-wal.txt | grep -F -c "WAL provides more concurrency as readers do not block writers and a writer does not block readers. Reading and writing can proceed concurrently."
+1
+
+--- Q2 ---
+tr -s '[:space:]' ' ' < sources/raw/sqlite-wal.txt | grep -F -c "Writers merely append new content to the end of the WAL file. Because writers do nothing that would interfere with the actions of readers, writers and readers can run at the same time. However, since there is only one WAL file, there can only be one writer at a time."
+1
+
+--- Q3 ---
+tr -s '[:space:]' ' ' < sources/raw/sqlite-wal.txt | grep -F -c "All processes using a database must be on the same host computer; WAL does not work over a network filesystem."
+1
+
+
+===== sqlite-lts =====
+
+--- dated_locator check (sqlite-lts) ---
+tr -s '[:space:]' ' ' < sources/raw/sqlite-lts.txt | grep -F -c "This page was last updated on 2025-05-31"
+1
+
+--- Q1 ---
+tr -s '[:space:]' ' ' < sources/raw/sqlite-lts.txt | grep -F -c "SQLite database files are bit-for-bit identical on 32-bit, 64-bit, big-endian, and little-endian platforms. You can copy an SQLite database file from one system to another without having to translate or convert the database."
+1
+
+--- Q2 ---
+tr -s '[:space:]' ' ' < sources/raw/sqlite-lts.txt | grep -F -c "Furthermore, the file format is well documented and stable. Database files created today will be readable and writable by future versions of SQLite decades in the future."
+1
+
+--- Q3 ---
+tr -s '[:space:]' ' ' < sources/raw/sqlite-lts.txt | grep -F -c "The intent of the developers is to support SQLite through the year 2050."
+1
+
+
+===== sqlite-cli =====
+
+--- dated_locator check (sqlite-cli) ---
+tr -s '[:space:]' ' ' < sources/raw/sqlite-cli.txt | grep -F -c "This page was last updated on 2026-05-29"
+1
+
+--- Q1 ---
+tr -s '[:space:]' ' ' < sources/raw/sqlite-cli.txt | grep -F -c "When .import is run, its treatment of the first input row depends upon whether the target table already exists. If it does not exist, the table is automatically created and the content of the first input row is used to set the name of all the columns in the table."
+1
+
+--- Q2 ---
+tr -s '[:space:]' ' ' < sources/raw/sqlite-cli.txt | grep -F -c "If the --csv or --ascii options are used, they control import input delimiters. Otherwise, the delimiters are those in effect for the current output mode."
+1
+
+
+===== sqlite-changes =====
+
+--- dated_locator check (sqlite-changes) ---
+tr -s '[:space:]' ' ' < sources/raw/sqlite-changes.txt | grep -F -c "2026-07-24 (3.53.4)"
+1
+
+--- Q1 ---
+tr -s '[:space:]' ' ' < sources/raw/sqlite-changes.txt | grep -F -c "This page provides a high-level summary of changes to SQLite. For more detail, see the Fossil checkin logs at https://sqlite.org/src/timeline and https://sqlite.org/src/timeline?t=release."
+1
+
+--- Q2 ---
+tr -s '[:space:]' ' ' < sources/raw/sqlite-changes.txt | grep -F -c "In WAL mode, if a writer crashes and leaves the shm file in an inconsistent state, subsequent transactions are now able to recover the shm file even if there are active read transactions."
+1
+
+--- Q3 ---
+tr -s '[:space:]' ' ' < sources/raw/sqlite-changes.txt | grep -F -c "This interface change should be fully backwards compatible, though it might cause (harmless) compiler warnings when rebuilding some legacy applications."
+1
+
+
+===== duckdb-sigmod19 =====
+
+--- dated_locator check (duckdb-sigmod19) ---
+tr -s '[:space:]' ' ' < sources/raw/duckdb-sigmod19.txt | grep -F -c "June 30-July 5, 2019, Amsterdam, Netherlands"
+1
+
+--- Q1 ---
+tr -s '[:space:]' ' ' < sources/raw/duckdb-sigmod19.txt | grep -F -c "SQLite strongly focuses on transactional (OLTP) workloads, and contains a row-major execution engine operating on a B-Tree storage format [3]. As a consequence, SQLite’s performance on analytical (OLAP) workloads is very poor."
+1
+
+--- Q2 ---
+tr -s '[:space:]' ' ' < sources/raw/duckdb-sigmod19.txt | grep -F -c "DuckDB uses a vectorized interpreted execution engine [1]. This approach was chosen over Just-in-Time compilation (JIT) of SQL queries [8] for portability reasons."
+1
+
+--- Q3 ---
+tr -s '[:space:]' ' ' < sources/raw/duckdb-sigmod19.txt | grep -F -c "DuckDB provides ACID-compliance through Multi-Version Concurrency Control (MVCC). We implement HyPer’s serializable variant of MVCC that is tailored specifically for hybrid OLAP/OLTP systems [10]."
+1
+
+
+===== duckdb-cidr20 =====
+
+--- dated_locator check (duckdb-cidr20) ---
+tr -s '[:space:]' ' ' < sources/raw/duckdb-cidr20.txt | grep -F -c "January 12-15, 2020, Amsterdam, The Netherlands."
+1
+
+--- Q1 ---
+tr -s '[:space:]' ' ' < sources/raw/duckdb-cidr20.txt | grep -F -c "Feasible because the database can directly scan existing files (e.g. CSV), reshape the result and then append it to a persistent table."
+1
+
+--- Q2 ---
+tr -s '[:space:]' ' ' < sources/raw/duckdb-cidr20.txt | grep -F -c "DuckDB uses a single-file storage format to store data on disk. The file format is designed to support efficient scans and bulk updates, appends and deletes. While single-value or single-row updates are supported, their efficiency is not a design goal."
+1
+
+--- Q3 ---
+tr -s '[:space:]' ' ' < sources/raw/duckdb-cidr20.txt | grep -F -c "The fact that the database only consists of a single file was inspired by SQLite [3] and repeated user requests for this feature in MonetDBLite."
+1
+
+
+===== duckdb-pvldb-hashjoin =====
+
+--- dated_locator check (duckdb-pvldb-hashjoin) ---
+tr -s '[:space:]' ' ' < sources/raw/duckdb-pvldb-hashjoin.txt | grep -F -c "PVLDB, 18(8): 2748-2760, 2025."
+1
+
+--- Q1 ---
+tr -s '[:space:]' ' ' < sources/raw/duckdb-pvldb-hashjoin.txt | grep -F -c "We integrate these techniques into DuckDB and experimentally show that when processing memory-intensive join query plans, our implementation gracefully degrades performance as the space requirement exceeds the memory limit."
+1
+
+--- Q2 ---
+tr -s '[:space:]' ' ' < sources/raw/duckdb-pvldb-hashjoin.txt | grep -F -c "All three are available in the v1.2.0 release. DuckDB is no research prototype but a widely used and well-tested system."
+1
+
+--- Q3 ---
+tr -s '[:space:]' ' ' < sources/raw/duckdb-pvldb-hashjoin.txt | grep -F -c "DuckDB’s buffer manager not only uses paged allocations for persistent data but also for temporary data. Storing intermediates on pages allows the buffer manager to evict them to storage if intermediates exceed the available memory limit."
+1
+
+
+===== summary =====
+32 checks above: 8 dated_locator checks + 24 quote checks. Every one returned 1.
+0 quotes claimed grep-exempt.
+
+
+===== sha256 reconciliation (entry header <-> file on disk <-> CAPTURE_LOG) =====
+
+shasum -a 256 sources/raw/*.txt sources/raw/*.src
+e549ba2868a5fb8332fd6c52c771c4ea728af75a8547f7813de03fe5e02cf97e  sources/raw/duckdb-cidr20.headers.txt
+b48ccc47b42900033ddb857ae26a9b810261f8724d85a92817881b51e894c994  sources/raw/duckdb-cidr20.txt
+f288e62531b4d3cba625730cb508d08b17b481b8d1c828ec3916981a19989791  sources/raw/duckdb-pvldb-hashjoin.headers.txt
+8edaeacdb0bfc142995e45a20ba7e6fc232ac3b436f62830a72bc6a954fc4ceb  sources/raw/duckdb-pvldb-hashjoin.txt
+8bbda7ea0f9a8e859a9b25cd9bc89dbb3301c14b6276585a974c5b2f6da5742a  sources/raw/duckdb-sigmod19.headers.txt
+1fd8fdcf36e85b2f69808b5adc1beeb7e031b800a0e04926ec9e298efede0917  sources/raw/duckdb-sigmod19.txt
+52f4cb212dd148e8d60d5817e418cd0e69bc3fb0e3a2bf600625df95bbf94721  sources/raw/sqlite-changes.headers.txt
+c620bae85a2e9a24e3b362584fa405fc47af54516b54fcadd989039682900fc6  sources/raw/sqlite-changes.txt
+02d1ff9b5c4f0bef3f3cf9ea30af2b9a5149068dda493b54e82f29a81a1491e9  sources/raw/sqlite-cli.headers.txt
+e2d18f7a44989e4701db7f1bd6efb9d44246461b39c592344bef645038987aa6  sources/raw/sqlite-cli.txt
+8a9a3fdea9194dbce38b8efb698b5b08decc03a9240eeaa0c728385cd44894ec  sources/raw/sqlite-lts.headers.txt
+11472f71ffff6dca36dc6fb10708f914e43a1b6417d24fc239788ce2ffdb9e2a  sources/raw/sqlite-lts.txt
+7168d012332cc55ca81854932c9f8c77cb9d9934272cf2d7afae2767fb9f0d5e  sources/raw/sqlite-wal.headers.txt
+344d748072ca5e4df3e46656944b116c1de75d99a507e44f5573b953f59e9980  sources/raw/sqlite-wal.txt
+3d9074baf90fb9a9854dc55d9fbffc82c3478a1f328c4c2261ad21727d112dca  sources/raw/sqlite-whentouse.headers.txt
+d81424b957a9a05c6b457d6c76233734d356f7b0f96a49c619aa650dc400d63b  sources/raw/sqlite-whentouse.txt
+51521141d0986bf823727598651562f2737146a666e4dcbb069455067bba9ed4  sources/raw/duckdb-cidr20.src
+5df6abe28d57703a8792c4e91aaef321d46f8a2de4531c629d75a8273318eb5e  sources/raw/duckdb-pvldb-hashjoin.src
+43fd71e165449dfce26f3e15b7c6452ac6c7f3bbedfaac41fd30949bb4bbbd9a  sources/raw/duckdb-sigmod19.src
+7affb06012865c2b6026630fb6e9c2307642d5930a91857068184a17a0740f41  sources/raw/sqlite-changes.src
+3d0e7bf59cab38cc4609e8dd4de51c947bc9a643d45e1d4413b65713d8688c42  sources/raw/sqlite-cli.src
+1c8bc5dfbfca0f3cf7317cef15663ac0a9a2022770d0f06e0c05643d38108361  sources/raw/sqlite-lts.src
+29315aaa998c5e2acf29e3ac161e9e8bf786d0c82a85ac83eb4f4091234acb7b  sources/raw/sqlite-wal.src
+d0850096c26e9c888acaf2d6e2ac029e86f66f51a87461b77b94f1639d309b79  sources/raw/sqlite-whentouse.src
+
+--- each entry header sha256 vs the file it names ---
+sqlite-whentouse         MATCH d81424b957a9a05c6b457d6c76233734d356f7b0f96a49c619aa650dc400d63b
+sqlite-wal               MATCH 344d748072ca5e4df3e46656944b116c1de75d99a507e44f5573b953f59e9980
+sqlite-lts               MATCH 11472f71ffff6dca36dc6fb10708f914e43a1b6417d24fc239788ce2ffdb9e2a
+sqlite-cli               MATCH e2d18f7a44989e4701db7f1bd6efb9d44246461b39c592344bef645038987aa6
+sqlite-changes           MATCH c620bae85a2e9a24e3b362584fa405fc47af54516b54fcadd989039682900fc6
+duckdb-sigmod19          MATCH 1fd8fdcf36e85b2f69808b5adc1beeb7e031b800a0e04926ec9e298efede0917
+duckdb-cidr20            MATCH b48ccc47b42900033ddb857ae26a9b810261f8724d85a92817881b51e894c994
+duckdb-pvldb-hashjoin    MATCH 8edaeacdb0bfc142995e45a20ba7e6fc232ac3b436f62830a72bc6a954fc4ceb
+
+--- extraction re-derivation: re-run the logged command, compare sha256 of the result ---
+pandoc -f html -t plain --wrap=none sources/raw/sqlite-lts.src -o /tmp/redo-sqlite-lts.txt && shasum -a 256 /tmp/redo-sqlite-lts.txt sources/raw/sqlite-lts.txt
+11472f71ffff6dca36dc6fb10708f914e43a1b6417d24fc239788ce2ffdb9e2a  /tmp/redo-sqlite-lts.txt
+11472f71ffff6dca36dc6fb10708f914e43a1b6417d24fc239788ce2ffdb9e2a  sources/raw/sqlite-lts.txt
+
+pdftotext sources/raw/duckdb-pvldb-hashjoin.src /tmp/redo-hashjoin.txt && shasum -a 256 /tmp/redo-hashjoin.txt sources/raw/duckdb-pvldb-hashjoin.txt
+8edaeacdb0bfc142995e45a20ba7e6fc232ac3b436f62830a72bc6a954fc4ceb  /tmp/redo-hashjoin.txt
+8edaeacdb0bfc142995e45a20ba7e6fc232ac3b436f62830a72bc6a954fc4ceb  sources/raw/duckdb-pvldb-hashjoin.txt
+
+(All eight captures were re-derived this way; two are shown here as the transcript, one HTML and one PDF.)

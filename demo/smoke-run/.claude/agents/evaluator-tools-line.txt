@@ -1,0 +1,1 @@
+tools: Read, Glob, Grep, Bash, WebFetch

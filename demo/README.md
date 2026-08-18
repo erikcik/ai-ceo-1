@@ -44,7 +44,26 @@ makes it a test of the domain-general claim rather than a re-run of the original
 | `PROGRESS.md` | The handoff, as the last builder session left it. |
 | `memory/` | Lessons the run wrote for future tasks, plus its `INDEX.md`. |
 | `logs/` | Per-session stdout with the invoking command line, and `loop.log` with every cycle and verdict. |
-| `git-log.txt` | The commit record of the run. |
+| `REPORT.md` | The deliverable the loop actually produced: 1192 body words, every claim cited, eight primary sources. |
+| `git-log.txt` | The commit record of the run — agent commits, `commit-on-stop` checkpoints, and wrapper cycle commits carrying each verdict. |
+
+**Outcome: all four levels confirmed, clean exit.** `logs/loop.log` ends with
+`exit: every level in SCOREBOARD.json passes`, and `SCOREBOARD.json` has four `true` rows,
+each stamped `confirmed_at` and pointing at the verdict that earned it. Five cycles ran:
+
+```
+level-1  build ──────────────────────────────► PASS
+level-2  build ──► [evaluator crashed]  ✗ wrapper bug, run halted and fixed
+         build ──────────────────────────────► NEEDS_WORK
+         rebuild ────────────────────────────► PASS
+level-3  build ──────────────────────────────► PASS
+level-4  build ──────────────────────────────► PASS
+```
+
+Nothing in `sources/raw/` was written by a model: the captures carry live Cloudflare response
+headers, the PDFs begin `%PDF-1.5`, the HTML extracts carry site nav boilerplate, and every
+`content-length` header matches the byte size on disk. The evaluator checked all of that
+itself rather than believing the builder's transcript.
 
 ### The rework, and what the evaluator caught
 

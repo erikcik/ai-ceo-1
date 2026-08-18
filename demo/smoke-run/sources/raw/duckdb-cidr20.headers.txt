@@ -1,0 +1,18 @@
+HTTP/2 200 
+date: Mon, 17 Aug 2026 22:29:58 GMT
+content-type: application/pdf
+content-length: 197233
+x-content-type-options: nosniff
+report-to: {"group":"cf-nel","max_age":604800,"endpoints":[{"url":"https://a.nel.cloudflare.com/report/v4?s=XOy7Jk6c0vOLv6gk6nDRuzaS74DFvOMC7GXCIlyFwMIjWizdkSGMzxl3RdFyJoB8GHQP35EvWqf19%2FBAu6hAlR%2FBDSc89syULozM1vLTnyWUXdiimde%2F0%2FAczS3E"}]}
+nel: {"report_to":"cf-nel","success_fraction":0.0,"max_age":604800}
+access-control-allow-origin: *
+cache-control: public, max-age=3600
+etag: "4fc43f5f3d19f8d058b25aa319247e77"
+referrer-policy: strict-origin-when-cross-origin
+speculation-rules: "/cdn-cgi/speculation"
+server: cloudflare
+accept-ranges: bytes
+cf-cache-status: REVALIDATED
+cf-ray: a2cc1ee06d6b2352-IST
+alt-svc: h3=":443"; ma=86400
+

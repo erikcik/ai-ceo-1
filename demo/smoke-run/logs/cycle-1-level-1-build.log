@@ -1,0 +1,20 @@
+### builder session | cycle 1 | level level-1 | 2026-08-18T01:17:39
+### command: claude -p --model opus --permission-mode bypassPermissions
+### cwd: /tmp/aiceo-smoke
+
+Level 1 is complete and committed. Summary:
+
+**Dossier (8 entries, at the operator's 5–8 cap)**
+- **SQLite (5):** `whentouse`, `wal`, `lts`, `cli` (docs) + `changes` (release-notes) — all from sqlite.org, each printing its own "last updated" ISO date.
+- **DuckDB (3):** SIGMOD'19 demo paper, CIDR'20 paper, PVLDB 2025 "Saving Private Hash Join" (larger-than-memory).
+- 24 quotes, 13–50 words each, every one a complete sentence of body prose with a section heading and, for PDFs, a page number established by per-page extraction rather than estimate.
+
+**Verification** — `evidence/level-1/quote-check.txt` holds 32 copy-pasteable one-liners (8 date greps + 24 quote greps) with output, all returning `1`, plus sha256 reconciliation and two extraction re-derivations. I also re-checked the quotes *as written in the entry files* against the captures — that's the path the evaluator takes, and all 24 pass. No quote uses the PDF grep exemption.
+
+**The one real weakness, stated in `CLAIM.md` rather than hidden:** all three DuckDB entries are papers. duckdb.org's HTML returns only `date:` and `content-type:` — no `Content-Length`/`ETag`/`Last-Modified` under any of five request variations — and its docs pages carry no date in the body at all, so no DuckDB documentation page could satisfy criteria 1 or 5. (Its `/docs/stable/` URLs are also 569-byte JS redirect stubs; static PDFs on the same host are header-complete, which is why the papers work.) Consequence for level 2: **DuckDB Parquet ingest and 1.0.0 storage-format stability have no primary source yet** — either add one dated, header-complete source or record them in `claims/gaps.md`.
+
+**Exclusions** — 4 non-primary documents, all four actually fetched, each rejected on a string that greps to `1` in its stored capture (undated vendor page, undated third-party post, an uncited "10-50 times faster" multiplier, a third-party benchmark).
+
+**One blocked action:** `rm -f` on two zero-byte artifacts of a failed motherduck.com fetch was denied by the safety gate and logged to `PAUSED_ACTIONS.md`. Not retried; the leftover empty file is documented in `CAPTURE_LOG.md` §3f and backs nothing.
+
+Also written: 6 memory lessons + `INDEX.md`, and `PROGRESS.md` with the level-2 work list.

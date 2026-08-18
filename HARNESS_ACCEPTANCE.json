@@ -7,7 +7,7 @@
       "Rows tagged \"fresh_session_required\": true may ONLY cite output from a `claude -p` process launched by harness/loop.sh or a demo probe script. Hook config is snapshotted at session start, so the build session cannot be evidence about the hooks it edited.",
       "The harness's own runtime scoreboard is SCOREBOARD.json and is a different file from this one."
     ],
-    "phase": "2 - implemented; rows carry evidence"
+    "phase": "2 - complete; 42/42 rows true, each with cited evidence"
   },
   "process-1-build-plan": {
     "passes": true,
@@ -80,11 +80,11 @@
     "evidence": ".claude/CLAUDE.md 'End of session' states edit-in-place-never-append and the ~8k budget; settings.json wires progress-budget.sh to SessionStart. demo/safety-probe/13-progress-over-budget.transcript.txt: a fresh session opened against a 62112-byte PROGRESS.md answered that its first task is to condense it, quoting '~15.5k' -- the figure the hook computed (62112/4=15528)."
   },
   "frozen-9-git-checkpoints": {
-    "passes": false,
+    "passes": true,
     "requirement": "Git commit at checkpoints, with commit-on-stop as the backstop.",
     "check": "demo/git-log.txt from the smoke-run workspace shows one or more commits per cycle, including at least one made by commit-on-stop.sh at session end.",
     "fresh_session_required": true,
-    "evidence": null
+    "evidence": "demo/smoke-run/git-log.txt and git-log-oneline.txt show, per cycle: an agent-written commit naming the level (e.g. '3e7652c level-2: clear NEXT_FINDINGS -- drop C4's derived ratio ...'), commit-on-stop.sh backstop commits ('session checkpoint: 2026-08-18 03:18'), and the wrapper's own cycle commit carrying the verdict ('c8dec3a loop cycle 2: level-2 -> PASS', '5e333c0 loop cycle 1: level-2 -> NEEDS_WORK'). All three mechanisms are visible in one history."
   },
   "memory-1-two-kinds": {
     "passes": true,
@@ -255,17 +255,17 @@
     "evidence": "Every session ran as a separate process launched by a script. demo/smoke-run/logs/ holds one stdout file per session, each opening with the invoking command line, the model, the permission mode and the cwd. harness/loop.sh and harness/plan.sh are the only launchers; the build session that wrote the harness launched none of them directly."
   },
   "smoke-4-artifacts-preserved": {
-    "passes": false,
+    "passes": true,
     "requirement": "LEVELS.md, PROGRESS.md, memory files, evaluator verdicts, and git log from the smoke run are preserved in demo/.",
     "check": "demo/ contains all five artifact classes from the smoke-run workspace and demo/README.md maps each one to the requirement it evidences.",
-    "evidence": null
+    "evidence": "demo/smoke-run/ holds 111 files: INIT_PROMPT.md, LEVELS.md, EVIDENCE.md, RUBRIC.md, RUBRIC_REVIEW.md, OPERATOR_NOTES.md, SCOREBOARD.json (4/4 true with confirmed_at), PROGRESS.md, PAUSED_ACTIONS.md, REPORT.md (the deliverable), memory/ with INDEX.md, evidence/level-1..4/, sources/ with captures and CAPTURE_LOG.md, claims/, logs/ with every session stdout and all five verdicts, and git-log.txt. demo/README.md maps each class to the requirement it evidences. Only the rejected (non-primary) .src binaries were dropped, with their hashes retained in sources/rejected/SRC-REMOVED.sha256 and the reason stated there."
   },
   "smoke-5-loop-terminates": {
-    "passes": false,
+    "passes": true,
     "requirement": "The loop terminates when LEVELS.md is complete or AGENT_STOP appears.",
     "check": "demo/logs/loop.log shows a clean exit with its reason (no false rows remaining, or AGENT_STOP), plus a separate captured run showing the AGENT_STOP exit path.",
     "fresh_session_required": true,
-    "evidence": null
+    "evidence": "Two exits are on record. Completion: demo/smoke-run/logs/loop.log final line '[2026-08-18 03:18:24] exit: every level in SCOREBOARD.json passes', with harness/scoreboard.sh remaining -> 0. AGENT_STOP: demo/loop-guards/README.md section 2 shows loop.sh exiting 'AGENT_STOP present' before launching any builder. A third path -- halting when the evaluator returns no verdict -- was exercised for real in cycle 2 and is asserted in selftest."
   },
   "hygiene-1-no-stale-scaffolding": {
     "passes": true,

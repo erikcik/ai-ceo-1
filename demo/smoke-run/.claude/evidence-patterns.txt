@@ -1,0 +1,34 @@
+# Evidence file globs for track-read.sh.
+# A Read of any file matching a line here counts as "evidence opened" this session,
+# which is what unlocks writing evidence/level-<N>/CLAIM.md.
+#
+# Mirrors EVIDENCE.md section 1. If you change one, change the other.
+#
+# Deliberately absent: REPORT.md, PROGRESS.md, LEVELS.md, RUBRIC.md, and CLAIM.md.
+# Reading the thing you wrote about your own work is not opening evidence.
+
+# 1.1 source entries
+*sources/*.md
+*/sources/*.md
+
+# 1.2 raw captures (as-fetched and extracted text)
+*sources/raw/*
+*/sources/raw/*
+
+# 1.5 claim scaffolding
+*claims/*.md
+*/claims/*.md
+
+# 1.4 / 1.6 verification transcripts and the citation audit
+*/evidence/level-*/quote-check.txt
+*/evidence/level-*/map-check.txt
+*/evidence/level-*/verify.txt
+*/evidence/level-*/wordcount.txt
+*/evidence/level-*/claim-coverage.md
+*/evidence/level-*/citation-audit.md
+*evidence/level-*/quote-check.txt
+*evidence/level-*/map-check.txt
+*evidence/level-*/verify.txt
+*evidence/level-*/wordcount.txt
+*evidence/level-*/claim-coverage.md
+*evidence/level-*/citation-audit.md

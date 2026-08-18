@@ -1,0 +1,766 @@
+[] Back to Scaling Python applications guides
+
+DuckDB vs SQLite: Choosing the Right Embedded Database
+
+Python DuckDB SQLite
+
+Stanley Ulili
+
+Updated on April 14, 2025
+
+Contents
+
+- What is SQLite?
+- What is DuckDB?
+- DuckDB vs SQLite: a quick comparison
+- Data storage architecture
+- Query processing
+- Data types and functions
+- Concurrency and transactions
+- Performance optimization
+- Integration with data science workflows
+- Database maintenance
+- Final thoughts
+
+DuckDB and SQLite are popular embedded database solutions, offering file-based operation without a server component but designed with different priorities and use cases in mind.
+
+SQLite[] is the world's most widely deployed database engine, known for its reliability, exceptional portability, and versatile transaction support. It excels in application file formats, local data storage, and situations requiring ACID compliance with minimal overhead.
+
+DuckDB[] represents a newer approach, focusing specifically on analytical workloads and OLAP (Online Analytical Processing) scenarios. It implements columnar storage for efficient data analysis and complex aggregations over large datasets.
+
+This article examines their architectural differences, performance characteristics, and ideal application scenarios to help you determine which embedded database best suits your specific requirements.
+
+The fastest log
+search on the planet
+
+Better Stack lets you see inside any stack, debug any issue, and resolve any incident.
+
+Explore more
+
+What is SQLite?
+
+[SQLite logo]
+
+[SQLite logo]
+
+SQLite is a tiny but mighty database created by D. Richard Hipp in 2000. It's not a server that runs separately - it's a small library that becomes part of your app.
+
+Think of SQLite as a smart file format. Your entire database lives in a single file you can copy, email, or backup easily. The whole engine is smaller than 600KB (about the size of a small image), yet it powers most smartphones, web browsers, and millions of apps.
+
+You don't need to install, configure, or manage SQLite. It just works. This simplicity is why it's now the most widely used database in the world.
+
+What is DuckDB?
+
+[DuckDB logo]
+
+[DuckDB logo]
+
+DuckDB is the new kid on the block, released in 2019 by researchers from CWI Amsterdam and MIT. It's built specifically for data analysis and handles big data operations much faster than traditional databases.
+
+Like SQLite, DuckDB runs directly inside your application - no server needed. But it's designed with a completely different goal: making data analysis lightning fast.
+
+DuckDB processes your data in cleverly organized columns instead of rows, and crunches numbers in batches rather than one at a time. This makes a huge difference when you're analyzing millions of records. It's like switching from a regular car to a race car when you need to analyze data.
+
+DuckDB vs SQLite: a quick comparison
+
+Picking the right database can make or break your app's performance. SQLite and DuckDB look similar on the surface (both are embedded databases), but they're built for completely different jobs.
+
+Here's a straightforward comparison to help you decide:
+
+  Feature                  DuckDB                                             SQLite
+  ------------------------ -------------------------------------------------- ------------------------------------------------
+  Primary workload focus   Analytical (OLAP)                                  Transactional (OLTP)
+  Storage model            Columnar storage                                   Row-based storage
+  Query execution          Vectorized batch processing                        Tuple-at-a-time processing
+  Memory management        Optimized for in-memory operations                 Bounded memory usage
+  Parallel execution       Multi-threaded query processing                    Single-threaded execution
+  Data types               Rich analytical types (e.g., nested, geographic)   Basic SQL types with flexible type affinity
+  SQL support              SQL with analytical extensions                     Comprehensive SQL with some limitations
+  Concurrency model        Multi-reader/single-writer                         Sophisticated multi-reader/writer with WAL
+  Transaction isolation    Serializable                                       Serializable with fine-grained control
+  File size limits         Practically unlimited                              Up to 281 TB (with 64KB pages)
+  Ecosystem                Growing, focused on data science integration       Vast, mature ecosystem across multiple domains
+  Language bindings        Python, R, Java, C/C++                             Nearly all programming languages
+  Update frequency         Active development with frequent releases          Stable with infrequent but reliable updates
+  Deployment footprint     ~5MB                                               ~600KB
+  External data support    Direct querying of Parquet, CSV, JSON files        Virtual tables through extensions
+  License                  MIT License                                        Public Domain
+
+Data storage architecture
+
+The biggest difference between these databases is how they store your data, which explains why they perform so differently.
+
+SQLite stores data by rows - like a traditional spreadsheet. When you add a new user to your database, SQLite keeps all their information together in one place:
+
+ 
+
+[]
+
+Copied!
+
+    -- Adding a new user in SQLite
+    INSERT INTO users (name, email, created_at, status)
+    VALUES ('John Doe', 'john@example.com', '2023-04-11', 'active');
+
+    -- Getting a user's complete profile
+    SELECT * FROM users WHERE id = 42;
+
+This row-based approach makes SQLite great at quickly adding new records and fetching complete information about specific items. It runs efficiently with minimal storage space and can update single records without rewriting everything.
+
+DuckDB flips this idea on its head. It stores data by columns - all names together, all emails together, and so on. This seems strange until you need to analyze data:
+
+ 
+
+[]
+
+Copied!
+
+    -- Finding average salaries by department in DuckDB
+    SELECT 
+        department,
+        AVG(salary) as avg_salary,
+        COUNT(*) as employee_count
+    FROM employees
+    GROUP BY department
+    ORDER BY avg_salary DESC;
+
+DuckDB's column-based storage gives you better compression since similar data compresses better together. It enables blazing fast scans when you only need certain columns, processes similar data in efficient batches, and reduces wasted reading when you don't need all fields.
+
+The difference is dramatic with big datasets. If you need to find the average age of 1 million customers, DuckDB might be 10-50 times faster than SQLite. But if you need to pull up complete profiles of specific customers, SQLite could be the better choice.
+
+Query processing
+
+SQLite and DuckDB process your queries completely differently, which explains their performance differences.
+
+SQLite handles queries one row at a time - like checking items on a shopping list one by one. This works well for finding specific information:
+
+ 
+
+[]
+
+Copied!
+
+    -- Finding recent transactions for a specific user
+    SELECT 
+        transaction_id,
+        amount,
+        created_at,
+        status
+    FROM transactions
+    WHERE user_id = 123
+      AND created_at >= '2023-01-01'
+    ORDER BY created_at DESC
+    LIMIT 10;
+
+SQLite's approach uses very little memory and works great for finding specific records quickly. It's perfect for transaction processing (like recording orders) and performs consistently across different types of queries.
+
+DuckDB works more like a data crunching machine. It processes information in chunks rather than one piece at a time, similar to how modern CPUs are designed to work:
+
+ 
+
+[]
+
+Copied!
+
+    -- Complex sales analysis in DuckDB
+    SELECT 
+        EXTRACT(YEAR FROM order_date) AS year,
+        EXTRACT(MONTH FROM order_date) AS month,
+        product_category,
+        SUM(order_amount) AS total_sales,
+        COUNT(DISTINCT customer_id) AS unique_customers,
+        SUM(order_amount) / COUNT(DISTINCT customer_id) AS avg_spend_per_customer
+    FROM orders
+    WHERE order_date BETWEEN '2020-01-01' AND '2023-12-31'
+    GROUP BY 
+        EXTRACT(YEAR FROM order_date),
+        EXTRACT(MONTH FROM order_date),
+        product_category
+    ORDER BY year, month, total_sales DESC;
+
+DuckDB crunches data in batches for maximum CPU efficiency and uses all available CPU cores for parallel processing. It compiles critical query parts for extra speed and employs smart optimization techniques from the data warehousing world.
+
+The difference is dramatic. For analytical queries on millions of records, DuckDB can be 10-100 times faster than SQLite. That's not a small improvement - it's the difference between waiting seconds versus minutes (or minutes versus hours).
+
+Data types and functions
+
+SQLite and DuckDB handle data types very differently, reflecting what they were built to do.
+
+SQLite takes a relaxed approach to data types. It's flexible and forgiving:
+
+ 
+
+[]
+
+Copied!
+
+    CREATE TABLE user_profiles (
+        id INTEGER PRIMARY KEY,
+        username TEXT NOT NULL UNIQUE,
+        last_login DATETIME,
+        preferences TEXT,  -- Can store JSON strings
+        account_balance REAL,
+        is_active INTEGER  -- Used as boolean (0 or 1)
+    );
+
+    -- SQLite doesn't strictly enforce types
+    INSERT INTO user_profiles VALUES (
+        1, 
+        'johndoe', 
+        CURRENT_TIMESTAMP,
+        '{"theme":"dark","notifications":true}',
+        125.50,
+        1
+    );
+
+SQLite's approach is practical with just a few basic types (TEXT, INTEGER, REAL, BLOB). You can often store one type in another column (like dates as text), and it's not picky about what goes where. You can store JSON as text and use JSON functions to work with it. This flexibility makes it easy to use but can allow data errors.
+
+DuckDB supports many more specialized data types for analytical work:
+
+ 
+
+[]
+
+Copied!
+
+    CREATE TABLE analytics_events (
+        id BIGINT,
+        event_timestamp TIMESTAMP WITH TIME ZONE,
+        user_id UUID,
+        session_data JSON,
+        device_info STRUCT(
+            name VARCHAR,
+            type VARCHAR,
+            os VARCHAR,
+            version VARCHAR
+        ),
+        location POINT,
+        metrics DECIMAL(18,6)[],
+        tags VARCHAR[]
+    );
+
+    -- DuckDB handles complex data naturally
+    INSERT INTO analytics_events VALUES (
+        1,
+        '2023-04-11 14:32:11.123+02:00',
+        'f47ac10b-58cc-4372-a567-0e02b2c3d479',
+        '{"page":"home","referrer":"google"}',
+        {'iPhone', 'mobile', 'iOS', '16.2'},
+        POINT(40.7128, -74.0060),
+        [123.456789, 98.765432],
+        ['mobile', 'new_user', 'high_value']
+    );
+
+DuckDB's type system includes many advanced features like precise date and time types with timezone support, nested structures for complex data, arrays and lists to store multiple values in one field, geographic types for location data, built-in JSON support, and specialized types for time periods and ranges.
+
+DuckDB also has hundreds of built-in functions for data analysis, statistics, and transformations that SQLite simply doesn't have. If you're doing data science, these functions save you tons of work.
+
+Concurrency and transactions
+
+How do these databases handle multiple users or processes accessing data at the same time? This is another area where they differ significantly.
+
+SQLite has a surprisingly sophisticated system for handling concurrent access:
+
+ 
+
+[]
+
+Copied!
+
+    # Python example showing SQLite's transaction capabilities
+    import sqlite3
+
+    # Open two connections to the same database
+    con1 = sqlite3.connect("app.db", isolation_level="IMMEDIATE")
+    con2 = sqlite3.connect("app.db")
+
+    # First connection starts changing data
+    cur1 = con1.cursor()
+    cur1.execute("BEGIN TRANSACTION")
+    cur1.execute("UPDATE accounts SET balance = balance - 100 WHERE id = 1")
+
+    # Second connection can still read data if configured to
+    cur2 = con2.cursor()
+    cur2.execute("PRAGMA read_uncommitted = 1")
+    cur2.execute("SELECT balance FROM accounts WHERE id = 1")
+    print("Uncommitted balance:", cur2.fetchone()[0])
+
+    # Make the changes permanent
+    con1.commit()
+
+SQLite's transaction system gives you rock-solid reliability with ACID compliance and a special mode (WAL) that allows readers and writers to work simultaneously. It offers different isolation levels to balance safety and performance, supports transactions within transactions, and provides multiple locking levels from light to heavy.
+
+DuckDB keeps things simpler, which makes sense for its analytical focus:
+
+ 
+
+[]
+
+Copied!
+
+    # Python example of DuckDB's transaction approach
+    import duckdb
+
+    # Create two connections to the same database
+    con1 = duckdb.connect("analytics.duckdb")
+    con2 = duckdb.connect("analytics.duckdb")
+
+    # First connection starts a data import
+    con1.execute("BEGIN TRANSACTION")
+    con1.execute("INSERT INTO daily_metrics SELECT * FROM compute_metrics()")
+
+    # Second connection can still read existing data
+    result = con2.execute("SELECT * FROM historical_metrics").fetchall()
+
+    # But this would wait until the first transaction finishes
+    # con2.execute("INSERT INTO daily_metrics VALUES (...)")
+
+    # Complete the import
+    con1.commit()
+
+DuckDB's approach to concurrency allows many to read at the same time, but only one can write. It provides the highest level of transaction isolation and uses optimistic concurrency (assumes conflicts are rare). DuckDB prioritizes analytical query performance and keeps things simple rather than providing lots of options.
+
+If your app needs many users writing data at once, SQLite's more sophisticated approach gives you more options. For data analysis where you mostly read data and only occasionally update it, DuckDB's simpler model works great while maintaining its blazing analytical speed.
+
+Performance optimization
+
+Want to get the most speed out of these databases? They need different approaches.
+
+For SQLite, focus on these proven techniques:
+
+ 
+
+[]
+
+Copied!
+
+    -- Make SQLite faster with indexes
+    CREATE INDEX idx_users_email ON users(email);
+    CREATE INDEX idx_orders_user_date ON orders(user_id, order_date);
+
+    -- See how SQLite will run your query
+    EXPLAIN QUERY PLAN 
+    SELECT * FROM orders
+    WHERE user_id = 123 AND order_date > '2023-01-01';
+
+    -- Speed settings for SQLite
+    PRAGMA journal_mode = WAL;
+    PRAGMA synchronous = NORMAL;
+    PRAGMA cache_size = -10000; -- ~10MB cache
+
+The best ways to speed up SQLite include adding indexes for columns you search frequently and adjusting settings with PRAGMA commands. Design your tables with your access patterns in mind, use prepared statements for queries you run often, and keep transactions reasonably sized.
+
+DuckDB needs completely different optimization techniques:
+
+ 
+
+[]
+
+Copied!
+
+    -- DuckDB performance tricks
+    -- Generate statistics for smarter query planning
+    ANALYZE orders;
+
+    -- Split data into logical chunks
+    CREATE TABLE monthly_sales(
+        year INTEGER,
+        month INTEGER,
+        product_id INTEGER,
+        sales_amount DECIMAL(18,2)
+    ) PARTITION BY (year, month);
+
+    -- Use all your CPU cores
+    SET threads TO 8;
+
+    -- Create smart views for frequently accessed data
+    CREATE VIEW regional_sales AS
+    SELECT 
+        region,
+        STRUCT_PACK(
+            products := LIST(DISTINCT product_id),
+            total := SUM(amount),
+            average := AVG(amount)
+        ) AS sales_data
+    FROM sales
+    GROUP BY region;
+
+To get maximum speed from DuckDB, use all your CPU cores with parallel processing and partition your data into logical segments. Let DuckDB use memory for processing when available, take advantage of column-oriented tricks, and use vectorized operations whenever possible.
+
+The speed difference is dramatic for analytical queries. With a million-row table, analytical queries often run 20-50 times faster in DuckDB than SQLite. But for simple lookups by ID, both perform similarly.
+
+Integration with data science workflows
+
+If you're working with data science tools like pandas, both databases can integrate with your workflow - but in very different ways.
+
+SQLite works well with most data tools:
+
+ 
+
+[]
+
+Copied!
+
+    # Using SQLite with pandas
+    import sqlite3
+    import pandas as pd
+
+    # Get data from SQLite
+    conn = sqlite3.connect("app.db")
+    df = pd.read_sql_query("SELECT * FROM user_events WHERE event_type = 'purchase'", conn)
+
+    # Analyze the data with pandas
+    monthly_stats = df.groupby(pd.Grouper(key='event_date', freq='M')).agg({
+        'amount': ['sum', 'mean', 'count']
+    })
+
+    # Save results back to SQLite
+    monthly_stats.to_sql("monthly_purchase_stats", conn, if_exists="replace")
+    conn.close()
+
+SQLite's strengths for data work:
+
+1.  Works with literally every programming language
+2.  Easy to use with pandas and similar tools
+3.  Lets you add custom functions in Python or other languages
+4.  Simple to import and export data
+5.  Compatible with many visualization tools
+
+DuckDB takes data science integration to another level:
+
+ 
+
+[]
+
+Copied!
+
+    # DuckDB's powerful data science integration
+    import duckdb
+    import pandas as pd
+
+    # Work directly with Parquet files without importing them
+    conn = duckdb.connect()
+    conn.execute("SET threads TO 8")
+
+    # Query Parquet files as if they were tables
+    result = conn.execute("""
+        SELECT 
+            date_trunc('month', event_date) AS month,
+            user_segment,
+            COUNT(*) AS event_count,
+            SUM(amount) AS total_amount
+        FROM read_parquet('events_*.parquet')
+        WHERE event_type = 'purchase'
+        GROUP BY 1, 2
+        ORDER BY 1, 2
+    """).fetchdf()
+
+    # DuckDB can even query pandas DataFrames directly
+    df = pd.DataFrame({
+        'id': range(1000000),
+        'value': range(1000000)
+    })
+
+    # Run SQL directly on the DataFrame - no conversion needed
+    result = conn.execute("SELECT AVG(value) FROM df WHERE id % 100 = 0").fetchone()[0]
+
+DuckDB's data science superpowers:
+
+1.  Works with pandas and Arrow without copying data
+2.  Reads Parquet and CSV files directly
+3.  Can query external data sources without importing
+4.  Makes pandas operations much faster
+5.  Handles huge datasets with ease
+
+For serious data analysis on large datasets, DuckDB offers game-changing performance and convenience. For apps that occasionally need to analyze data, SQLite with pandas works fine.
+
+Database maintenance
+
+How much work is needed to keep these databases running smoothly? Both aim for simplicity but offer different tools.
+
+SQLite needs very little maintenance but gives you useful tools when needed:
+
+ 
+
+[]
+
+Copied!
+
+    -- SQLite maintenance tools
+    -- Check database health
+    PRAGMA integrity_check;
+
+    -- Clean up and defragment
+    VACUUM;
+
+    -- Create an optimized copy
+    VACUUM INTO 'optimized.db';
+
+    -- Update statistics for query planning
+    ANALYZE;
+
+    -- Let SQLite create indexes automatically
+    PRAGMA automatic_index = ON;
+
+SQLite's approach to maintenance:
+
+1.  The database is just a file - incredibly simple to manage
+2.  Built-in tools to check and fix problems
+3.  Backup by just copying the file
+4.  Can create indexes automatically
+5.  Generally needs very little attention
+
+DuckDB also aims for simplicity, focused on analytical needs:
+
+ 
+
+[]
+
+Copied!
+
+    -- DuckDB maintenance commands
+    -- Update statistics for better query performance
+    ANALYZE table_name;
+
+    -- Export to a highly optimized format
+    COPY (SELECT * FROM large_table) TO 'data.parquet'
+        (FORMAT PARQUET, CODEC 'ZSTD');
+
+    -- Create a fresh, optimized version of a table
+    CREATE TABLE large_table_new AS 
+        SELECT * FROM read_parquet('data.parquet');
+
+    -- Clean up space
+    VACUUM;
+
+DuckDB's maintenance philosophy:
+
+1.  Self-tuning storage for analytical queries
+2.  Easy export to specialized analytical formats
+3.  Automatic statistics collection
+4.  Minimal configuration needed
+5.  Designed for maximum read performance
+
+For apps that run for years with constant updates, SQLite's mature maintenance tools give you more options. For data analysis where you mostly add new data rather than changing existing data, DuckDB needs less maintenance while delivering much faster analytical performance.
+
+Final thoughts
+
+DuckDB and SQLite are both great embedded databases, but they’re built for different jobs. DuckDB excels at fast, in-process analytics and works well with tools like pandas. SQLite is better suited for reliable local storage with strong transactional support.
+
+If you're analyzing data, go with DuckDB. SQLite is the way to go if you're building apps that need lightweight, dependable storage. Using both together often gives you the best of both worlds.
+
+Got an article suggestion? Let us know
+
+[] [] []
+
+Next article
+
+Introduction to Python Generators
+
+Learn how Python generators work with `yield` and `send()`, enabling efficient, memory-friendly handling of large datasets and infinite sequences. Discover the power of stateful iteration in Python and improve your code's performance.
+
+→
+
+[Licensed under CC-BY-NC-SA]
+
+This work is licensed under a Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International License.
+
+1.  Basics
+
+    1.  Building Web APIs with Flask
+
+    2.  Building Web APIs with FastAPI
+
+    3.  Building Web APIs with Litestar
+
+    4.  Linting with Ruff
+
+    5.  Creating composable CLIs with click in Python
+
+    6.  Debugging Python Code with ipdb
+
+    7.  Flask vs FastAPI
+
+    8.  Django vs FastAPI
+
+    9.  Building Web APIs with Django Rest Framework
+
+    10. Managing Python Projects
+
+    11. Profiling in Python
+
+    12. Getting Started with Poetry
+
+    13. Manage Multiple Python Versions With pyenv
+
+    14. Introduction to PDM
+
+    15. SQLAlchemy ORM for Python
+
+    16. TortoiseORM for Python
+
+    17. TortoiseORM vs SQLAlchemy
+
+    18. Getting Started with HTTPX
+
+    19. Getting Started with SQLModel
+
+    20. Getting Started with Peewee ORM
+
+    21. DuckDB for Python
+
+    22. Structural Pattern Matching in Python
+
+    23. Mastering unittest.mock in Python
+
+    24. Optimize Your Workflow in Python with pipx
+
+    25. An Introduction to Python Subprocess
+
+    26. Getting Started with IPython
+
+    27. A Complete Guide to Python Type Hints
+
+    28. Introduction to Django ORM
+
+    29. Jinja Templating
+
+    30. DuckDB vs SQLite
+
+    31. Introduction to Python Generators
+
+    32. Asynchronous Programming in Python
+
+    33. Getting Started with AnyIO in Python
+
+    34. Getting Started with Pipenv
+
+    35. Poetry vs Pip
+
+    36. Conda vs Pip
+
+    37. Getting Started with PyMongo
+
+    38. Dependency Injection in Python
+
+    39. JSON Data in Python
+
+    40. CSV Files in Python
+
+    41. Working with YAML Files in Python
+
+    42. One-Line Python HTTP Server: Quick Start Guide
+
+    43. Containerizing Flask Applications with Docker
+
+    44. FastAPI with Docker
+
+    45. Getting Started with Pylint
+
+    46. FastAPI Docker Best Practices
+
+    47. Using GraphQL with Python and FastAPI
+
+    48. How to Use Background Tasks in FastAPI
+
+    49. Introduction to Marshmallow in Python
+
+    50. Python Pandas: Working with CSV Files
+
+    51. Authentication and Authorization with FastAPI
+
+    52. Getting Started with GraphQL in Django
+
+    53. Getting Started with FastAPI WebSockets
+
+    54. Uploading Files Using FastAPI: A Complete Guide to Secure File Handling
+
+    55. Migrating from Litestar to FastAPI
+
+    56. Getting Started with Django WebSockets
+
+    57. Getting Started with Flask WebSockets
+
+    58. Getting Started with Litestar WebSockets
+
+    59. Getting Started with Sanic WebSockets
+
+    60. What's New in Python 3.14
+
+    61. Getting Started with Pyrefly
+
+    62. Scrapling: Adaptive Web Scraping with Self-Healing Selectors in Python
+
+2.  Job scheduling
+
+    1.  Task scheduling in Python
+
+    2.  Job Scheduling in Python with APScheduler
+
+    3.  Introduction to Django 6.0 Background Tasks
+
+3.  Building reliable Python applications
+
+    1.  Dockerizing Django Applications
+
+    2.  Using Django with PostgreSQL
+
+    3.  Solutions to Common Python Errors
+
+    4.  A Complete Guide to Gunicorn
+
+    5.  A Complete Guide to Pydantic
+
+    6.  Introduction to UV
+
+    7.  Load Testing with Locust
+
+    8.  Introduction to Pyright
+
+    9.  Introduction to Mypy
+
+    10. FastAPI Error Handling Patterns
+
+    11. Flask Error Handling Patterns
+
+    12. Django Docker Best Practices
+
+    13. Django Error Handling Patterns
+
+    14. Timeouts in Python
+
+4.  Logging
+
+    1.  Logging in Python
+
+    2.  Logging with Loguru
+
+    3.  Logging in Django
+
+    4.  Logging in Flask
+
+    5.  Python Logging Best Practices
+
+5.  Python comparisons
+
+    1.  Poetry vs Rye
+
+    2.  FastAPI vs Django vs Flask
+
+    3.  Litestar vs FastAPI
+
+    4.  Top 10 Django Alternatives for Web Development
+
+    5.  Django vs Laravel
+
+    6.  Django vs Ruby on Rails
+
+    7.  Ruby on Rails vs Laravel vs Django
+
+    8.  Spring Boot vs. Django
+
+    9.  Django vs Phoenix
+
+    10. Mise vs uv: Choosing the Right Python Package and Version Manager
+
+    11. Django vs React
