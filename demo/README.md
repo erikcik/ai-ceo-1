@@ -243,6 +243,15 @@ No model sessions at all. `loop-guards/README.md` is captured terminal output sh
 
 ---
 
+## A note on redaction
+
+Three preserved artifacts — `smoke-run/PAUSED_ACTIONS.md`, `smoke-run/PROGRESS.md`, and
+`smoke-run/logs/cycle-4-level-4-build.log` — originally contained the absolute home path of
+the machine the run happened on, because a builder session misplaced a file outside the
+workspace and reported the full path. Those occurrences are replaced with `<home>`. Nothing
+else in this directory has been edited: every verdict, transcript, capture, and log is
+byte-for-byte as the run produced it.
+
 ## Reproducing any of it
 
 ```bash

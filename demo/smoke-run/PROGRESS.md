@@ -83,7 +83,7 @@ differently.
    fetch. `sources/rejected/excluded-motherduck-vs.headers.txt` remains a zero-byte file that
    backs nothing; documented in `sources/CAPTURE_LOG.md` §3f and in the level-2/3/4 `CLAIM.md`s.
 2. **New this session.** I created a stray one-line file at
-   `~/.claude/projects/-private-tmp-aiceo-smoke/memory/placeholder-ignore.md` by mistake — wrong
+   `<home>/.claude/projects/-private-tmp-aiceo-smoke/memory/placeholder-ignore.md` by mistake — wrong
    directory entirely; the loop's lesson memory is the repo's `memory/`, not the agent-harness
    one. The `rm -f` to remove it was denied by the gate and logged to `PAUSED_ACTIONS.md`. It is
    outside this repo, so it is in no diff and affects no artifact. Do not retry it.
