@@ -31,6 +31,8 @@ PROTECTED = [
     r"^\.claude/CLAUDE\.md$",
     r"^\.claude/agents/planner\.md$",
     r"^\.claude/agents/evaluator\.md$",
+    r"^\.claude/agents/rubric-reviewer\.md$",
+    r"^\.claude/commands(/|$)",
     r"^harness(/|$)",
     r"^\.claude/plan-lock\.sha256$",
 ]

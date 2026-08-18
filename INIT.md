@@ -64,6 +64,15 @@ can't fail.
 
 ## 2. Run the planner
 
+The short way — open a session in the repo root and describe the task:
+
+```
+/start research the current evidence on X and produce a sourced review
+```
+
+`/start` interviews you for anything missing, writes `INIT_PROMPT.md`, runs both sessions
+below, and stops for your approval. The explicit way, which does exactly the same thing:
+
 ```bash
 harness/plan.sh "Task: ...  Domain: ...  Constraints: ...  Budget: ..."
 harness/plan.sh -f init-prompt.md          # or from a file

@@ -17,12 +17,26 @@ gates, and the memory system are fixed. Worked examples in medical research, sma
 strategy, and web development are in [EXTENDING.md](./EXTENDING.md).
 
 ```bash
+git clone <this-repo> && cd <this-repo>
+harness/doctor.sh          # tools, hooks, agents, and a live probe of your model endpoint
+claude                     # then type:  /start  <describe your task>
+```
+
+`/start` interviews you for the four things an initialization prompt needs, writes
+`INIT_PROMPT.md`, runs the planner and an independent rubric review, and **stops for your
+approval**. On approval it starts the loop. The same thing without a session:
+
+```bash
 harness/plan.sh "Task: ...  Domain: ...  Constraints: ...  Budget: ..."
 #   → LEVELS.md, EVIDENCE.md, RUBRIC.md, SCOREBOARD.json (every row false), RUBRIC_REVIEW.md
 #   → you read them and approve
 harness/loop.sh
 #   → build → evaluate → rebuild, until every row is confirmed or you stop it
 ```
+
+**The repo is the workspace.** Clone it once per task; the run's plan, evidence, memory and
+logs are committed into it, so `git log` is a second record of what happened. Run `claude`
+from the repo root — hooks are not loaded from a subdirectory.
 
 > Built on [`anthropics/cwc-long-running-agents`](https://github.com/anthropics/cwc-long-running-agents),
 > the take-home for the Long-Running Agents station at Code with Claude 2026, which shipped
@@ -97,6 +111,8 @@ is left. Durable learnings go somewhere else entirely — see below.
 | **`harness/scoreboard.sh`** | Concentrating every scoreboard write in one script called only by the wrapper is what makes `"passes": true` mean "independently confirmed". |
 | **`harness/memcheck.sh`** | MAINTAIN needs a concrete worklist, so one script reports which memory files are over budget or missing from the index. |
 | **`harness/planlock.sh`** | The builder is judged against `LEVELS.md` and `RUBRIC.md`, so it must not be able to edit them, while a change made deliberately by an operator has to stay possible. |
+| **`harness/doctor.sh`** | A clone onto a fresh machine either works or fails confusingly, so one command says which. |
+| **`.claude/commands/start.md`** | The whole system should be reachable by opening the repo and describing a task, without memorising a script name. |
 | **`harness/selftest.sh`** | Hooks that fail silently are worse than no hooks, so one script asserts each gate blocks what it must and allows what it must. |
 | **`.claude/agents/planner.md`** | A one-line ask has to become an ordered plan with per-level acceptance before any building starts, and that is a different job from building. |
 | **`.claude/agents/evaluator.md`** | The builder cannot grade itself, so a context that never saw the build judges the artifacts on disk instead. |
@@ -162,8 +178,49 @@ read-only to the agent process — and lists the gaps the shipped hooks do not c
 you launch from a subdirectory.
 
 ```bash
+harness/doctor.sh       # check everything above, plus a live probe of your model endpoint
 harness/selftest.sh     # 64 assertions over the hook logic — run after editing any gate
 ```
+
+### Running against your own model
+
+Point the CLI at your endpoint and leave the model variables alone:
+
+```bash
+export ANTHROPIC_BASE_URL=http://localhost:8000   # your server
+export ANTHROPIC_AUTH_TOKEN=...                   # if it wants one
+harness/doctor.sh                                 # confirms the endpoint answers
+```
+
+`BUILDER_MODEL`, `EVALUATOR_MODEL`, `PLANNER_MODEL` and `REVIEWER_MODEL` are **opt-in**. Unset,
+no `--model` flag is passed and every session uses whatever the CLI is pointed at — which is
+what you want when `opus`/`sonnet` mean nothing to your server. Set them only if your endpoint
+names models you want to choose between:
+
+```bash
+BUILDER_MODEL=my-13b EVALUATOR_MODEL=my-70b harness/loop.sh
+```
+
+Spend the larger model on the **evaluator**. Judging is where capability pays: a builder that
+overreaches gets caught, while a judge that misses things quietly certifies bad work.
+
+### Running unattended on a remote box
+
+```bash
+tmux new -s harness                  # so the loop survives your ssh session dropping
+MAX_CYCLES=8 harness/loop.sh 2>&1 | tee -a logs/run.log
+# detach: ctrl-b d      reattach: tmux attach -t harness
+
+# from anywhere, any time:
+harness/scoreboard.sh status         # what has been independently confirmed
+tail -f logs/loop.log                # cycles and verdicts
+touch AGENT_STOP                     # halt after the current step
+cat PAUSED_ACTIONS.md                # what it wanted to do and was not allowed to
+```
+
+Before the first unattended run on a machine that matters, read
+[SECURITY.md](./SECURITY.md) and make `.claude/` and `harness/` read-only to the agent
+process. The gates are speed bumps against drift, not a sandbox against intent.
 
 ## Docs
 
