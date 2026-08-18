@@ -18,8 +18,12 @@ set -uo pipefail
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 cd "$ROOT"
 
-PLANNER_MODEL="${PLANNER_MODEL:-opus}"
-REVIEWER_MODEL="${REVIEWER_MODEL:-opus}"
+# Opt-in, like loop.sh: unset means no --model flag, so the session uses whatever
+# the claude CLI is pointed at. Set these only if your endpoint names models.
+PLANNER_MODEL="${PLANNER_MODEL:-}"
+REVIEWER_MODEL="${REVIEWER_MODEL:-}"
+planner_model_arg=();  [ -n "$PLANNER_MODEL" ]  && planner_model_arg=(--model "$PLANNER_MODEL")
+reviewer_model_arg=(); [ -n "$REVIEWER_MODEL" ] && reviewer_model_arg=(--model "$REVIEWER_MODEL")
 PERM_MODE="${PERMISSION_MODE:-bypassPermissions}"
 LOGDIR="$ROOT/logs"; mkdir -p "$LOGDIR"
 
@@ -48,13 +52,13 @@ done
 printf '%s\n' "$INIT_PROMPT" > INIT_PROMPT.md
 echo "plan: initialization prompt saved to INIT_PROMPT.md"
 
-echo "plan: [1/2] planner session (model=$PLANNER_MODEL)"
+echo "plan: [1/2] planner session (model=${PLANNER_MODEL:-<cli default>})"
 {
   echo "### planner session | $(date '+%Y-%m-%dT%H:%M:%S')"
-  echo "### command: claude --agent planner -p --model $PLANNER_MODEL --permission-mode $PERM_MODE"
+  echo "### command: claude --agent planner -p ${PLANNER_MODEL:+--model $PLANNER_MODEL} --permission-mode $PERM_MODE"
   echo
 } > "$LOGDIR/plan-planner.log"
-claude --agent planner -p --model "$PLANNER_MODEL" --permission-mode "$PERM_MODE" \
+claude --agent planner -p "${planner_model_arg[@]}" --permission-mode "$PERM_MODE" \
   "Here is the initialization prompt for this task. Produce the plan artifacts per your instructions, then stop.
 
 $INIT_PROMPT" >> "$LOGDIR/plan-planner.log" 2>&1
@@ -77,8 +81,8 @@ fi
 harness/scoreboard.sh seed SCOREBOARD.seed.json || exit 3
 rm -f SCOREBOARD.seed.json
 
-echo "plan: [2/2] rubric gameability review (model=$REVIEWER_MODEL, fresh session)"
-claude --agent rubric-reviewer -p --model "$REVIEWER_MODEL" --permission-mode "$PERM_MODE" \
+echo "plan: [2/2] rubric gameability review (model=${REVIEWER_MODEL:-<cli default>}, fresh session)"
+claude --agent rubric-reviewer -p "${reviewer_model_arg[@]}" --permission-mode "$PERM_MODE" \
   "Review RUBRIC.md for gameability against LEVELS.md, EVIDENCE.md and SCOREBOARD.json, per your instructions." \
   > RUBRIC_REVIEW.md 2>&1
 review=$(head -1 RUBRIC_REVIEW.md | tr -d '\r ' | tr -d '`*#')

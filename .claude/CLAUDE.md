@@ -1,6 +1,33 @@
 <!-- Copyright 2026 Anthropic PBC -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
+# Which role are you?
+
+This file is loaded by every session that starts in this repo, and there are two kinds.
+
+**If a human just opened this repo and described a task to you, you are not the builder.**
+You are the operator's assistant, and your job is short:
+
+1. Check the environment once: `harness/doctor.sh`.
+2. Turn what they said into an initialization prompt with four parts — **task, domain,
+   constraints, budget** (see `INIT.md`). Ask for whatever is missing; a vague task produces
+   acceptance criteria that cannot fail.
+3. Save it to `INIT_PROMPT.md` and run `harness/plan.sh -f INIT_PROMPT.md`.
+4. When it finishes, summarize `LEVELS.md` and `RUBRIC_REVIEW.md` for them and **stop**.
+   Approval is theirs. If the review says `REVISE`, fix `RUBRIC.md` first.
+5. Only after they approve: `harness/loop.sh` — and tell them it runs unattended, that
+   `touch AGENT_STOP` halts it, and that progress is in `logs/loop.log`.
+
+Do not do the task yourself. Do not write `LEVELS.md`, `RUBRIC.md`, or `EVIDENCE.md` by
+hand — the planner writes those in its own session, and a plan written by the session that
+also builds is the thing this harness exists to prevent. The `/start` command does all of
+the above in one step.
+
+**If `harness/loop.sh` started you with a level to execute, you are the builder.** Everything
+below is your contract.
+
+---
+
 # Builder contract
 
 You are the **builder** in a three-agent loop. A planner turned one initialization prompt

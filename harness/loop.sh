@@ -16,17 +16,28 @@
 #   MAX_CYCLES=3 harness/loop.sh cap the run
 #   touch AGENT_STOP             stop after the current step
 #
-# Env: MAX_CYCLES (12), BUILDER_MODEL (sonnet), EVALUATOR_MODEL (opus).
+# Env: MAX_CYCLES (12), BUILDER_MODEL, EVALUATOR_MODEL, PERMISSION_MODE.
+#
+# The model variables are OPT-IN. Leave them unset and no --model flag is passed,
+# so every session uses whatever the `claude` CLI is already pointed at -- which
+# is what you want when you are serving your own model behind ANTHROPIC_BASE_URL
+# and the aliases "opus"/"sonnet" mean nothing to your endpoint. Set them only if
+# your endpoint actually offers named models you want to pick between.
 set -uo pipefail
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 cd "$ROOT"
 
 MAX_CYCLES="${MAX_CYCLES:-12}"
-BUILDER_MODEL="${BUILDER_MODEL:-sonnet}"
-EVALUATOR_MODEL="${EVALUATOR_MODEL:-opus}"
+BUILDER_MODEL="${BUILDER_MODEL:-}"
+EVALUATOR_MODEL="${EVALUATOR_MODEL:-}"
 PERM_MODE="${PERMISSION_MODE:-bypassPermissions}"
 LOGDIR="$ROOT/logs"
 LOOPLOG="$LOGDIR/loop.log"
+
+# --model is passed only when a model was named; otherwise the session inherits
+# the CLI's configured model.
+builder_model_arg=(); [ -n "$BUILDER_MODEL" ]   && builder_model_arg=(--model "$BUILDER_MODEL")
+eval_model_arg=();    [ -n "$EVALUATOR_MODEL" ] && eval_model_arg=(--model "$EVALUATOR_MODEL")
 
 mkdir -p "$LOGDIR"
 say() { printf '[%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*" | tee -a "$LOOPLOG"; }
@@ -78,7 +89,7 @@ if [ ! -e .claude/plan-lock.sha256 ]; then
   harness/planlock.sh lock || exit 2
 fi
 
-say "loop start | builder=$BUILDER_MODEL evaluator=$EVALUATOR_MODEL max_cycles=$MAX_CYCLES"
+say "loop start | builder=${BUILDER_MODEL:-<cli default>} evaluator=${EVALUATOR_MODEL:-<cli default>} max_cycles=$MAX_CYCLES"
 say "preflight ok | $(harness/scoreboard.sh remaining) level(s) still failing"
 
 # --- cycles ------------------------------------------------------------------
@@ -119,11 +130,11 @@ never saw this session will judge only what is on disk."
   buildlog="$LOGDIR/cycle-$cycle-$level-build.log"
   {
     echo "### builder session | cycle $cycle | level $level | $(date '+%Y-%m-%dT%H:%M:%S')"
-    echo "### command: claude -p --model $BUILDER_MODEL --permission-mode $PERM_MODE"
+    echo "### command: claude -p ${BUILDER_MODEL:+--model $BUILDER_MODEL} --permission-mode $PERM_MODE"
     echo "### cwd: $ROOT"
     echo
   } > "$buildlog"
-  claude -p --model "$BUILDER_MODEL" --permission-mode "$PERM_MODE" "$prompt" >> "$buildlog" 2>&1
+  claude -p "${builder_model_arg[@]}" --permission-mode "$PERM_MODE" "$prompt" >> "$buildlog" 2>&1
   say "cycle $cycle | build finished (rc=$?) | log=${buildlog#$ROOT/}"
 
   if [ -e AGENT_STOP ]; then say "exit: AGENT_STOP present after build"; exit 0; fi
@@ -136,7 +147,7 @@ EVIDENCE.md, the scoring in RUBRIC.md, and the builder's claim in evidence/$leve
 Open every artifact it names and check the claim against what the artifact actually shows.
 Compare against the baseline commit ${before:-HEAD~1}. Return PASS or NEEDS_WORK per your instructions."
 
-  claude --agent evaluator -p --model "$EVALUATOR_MODEL" --permission-mode "$PERM_MODE" "$evalprompt" > "$verdictfile" 2>&1
+  claude --agent evaluator -p "${eval_model_arg[@]}" --permission-mode "$PERM_MODE" "$evalprompt" > "$verdictfile" 2>&1
   verdict=$(read_verdict "$verdictfile")
 
   # An evaluator that CRASHED is not an evaluator that said NEEDS_WORK. Retry once,
@@ -144,7 +155,7 @@ Compare against the baseline commit ${before:-HEAD~1}. Return PASS or NEEDS_WORK
   if [ -z "$verdict" ]; then
     say "cycle $cycle | no verdict in evaluator output -- retrying once"
     mv "$verdictfile" "${verdictfile%.md}-attempt1.md"
-    claude --agent evaluator -p --model "$EVALUATOR_MODEL" --permission-mode "$PERM_MODE" "$evalprompt" > "$verdictfile" 2>&1
+    claude --agent evaluator -p "${eval_model_arg[@]}" --permission-mode "$PERM_MODE" "$evalprompt" > "$verdictfile" 2>&1
     verdict=$(read_verdict "$verdictfile")
   fi
   if [ -z "$verdict" ]; then
