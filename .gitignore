@@ -11,3 +11,6 @@ STEER.md
 #
 # The template repo simply ships with none of those files present, so a fresh
 # clone starts clean.
+runs/
+sdk/node_modules/
+.playwright-mcp/

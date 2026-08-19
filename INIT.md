@@ -10,7 +10,7 @@ human, and then the loop runs unattended until the plan is done or you stop it.
 your initialization prompt
         │
         ▼
-harness/plan.sh ──► planner session   ──► LEVELS.md, SCOREBOARD.seed.json,
+`npm run plan --` (in `sdk/`) ──► planner session   ──► LEVELS.md, SCOREBOARD.seed.json,
         │                                  EVIDENCE.md, .claude/evidence-patterns.txt,
         │                                  RUBRIC.md, [evaluator.addendum.md]
         │           validate + promote ──► SCOREBOARD.json  (all rows false)
@@ -21,7 +21,7 @@ harness/plan.sh ──► planner session   ──► LEVELS.md, SCOREBOARD.seed
                     YOU APPROVE  ← the only manual gate
                             │
                             ▼
-harness/loop.sh ──► build ──► evaluate ──► PASS: wrapper writes the scoreboard row
+`npm run loop --` ──► build ──► evaluate ──► PASS: wrapper writes the scoreboard row
                       ▲                    NEEDS_WORK: findings → NEXT_FINDINGS.md
                       └────────────────────────────────┘
                     until every row passes, or AGENT_STOP, or MAX_CYCLES
@@ -74,8 +74,8 @@ The short way — open a session in the repo root and describe the task:
 below, and stops for your approval. The explicit way, which does exactly the same thing:
 
 ```bash
-harness/plan.sh "Task: ...  Domain: ...  Constraints: ...  Budget: ..."
-harness/plan.sh -f init-prompt.md          # or from a file
+`npm run plan --` (in `sdk/`) "Task: ...  Domain: ...  Constraints: ...  Budget: ..."
+`npm run plan --` (in `sdk/`) init-prompt.md          # or from a file
 ```
 
 Two fresh sessions run. The planner produces:
@@ -101,7 +101,7 @@ manufacture to order, and acceptance criteria the rubric forgot to score.
 ### A domain with no evidence taxonomy does not start
 
 If the planner cannot say concretely what artifact proves work is done in this domain, it
-writes nothing and says so. `harness/loop.sh` independently refuses to start when
+writes nothing and says so. ``npm run loop --`` independently refuses to start when
 `EVIDENCE.md` or `.claude/evidence-patterns.txt` is missing:
 
 ```
@@ -141,9 +141,9 @@ The only manual gate, and the one worth your attention. Read:
 ## 4. Run the loop
 
 ```bash
-harness/loop.sh                          # until done
-MAX_CYCLES=3 harness/loop.sh             # capped
-BUILDER_MODEL=sonnet EVALUATOR_MODEL=opus harness/loop.sh
+`npm run loop --`                          # until done
+MAX_CYCLES=3 `npm run loop --`             # capped
+BUILDER_MODEL=sonnet EVALUATOR_MODEL=opus `npm run loop --`
 ```
 
 Each cycle is two fresh `claude -p` processes: a builder on the first level whose row is

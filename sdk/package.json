@@ -1,0 +1,20 @@
+{
+  "name": "ai-ceo-sdk",
+  "version": "1.0.0",
+  "description": "ai-ceo-1 harness re-implemented on the Claude Agent SDK: planner -> rubric review -> approval -> build/judge loop, with all gates enforced in-process.",
+  "type": "module",
+  "scripts": {
+    "plan": "tsx src/plan.ts",
+    "loop": "tsx src/loop.ts",
+    "status": "tsx src/status.ts",
+    "selftest": "tsx src/selftest.ts"
+  },
+  "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.3.235"
+  },
+  "devDependencies": {
+    "@types/node": "^26.2.0",
+    "tsx": "^4.23.12",
+    "typescript": "^7.0.2"
+  }
+}

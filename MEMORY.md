@@ -30,7 +30,7 @@ One file. **Edited in place, never appended.** It holds current state and what t
 session must know, not a history of how you got here — `git log` is the history, and it is
 better at it.
 
-Hard budget ~8k tokens. When a session starts over budget, `progress-budget.sh` injects the
+Hard budget ~8k tokens. When a session starts over budget, the loop's progress-budget check injects the
 instruction to condense before doing anything else. Condensing means deleting narration of
 completed, committed work — not summarizing it. If something is worth keeping past this
 task, it was never STATE; move it to `memory/`.
@@ -80,7 +80,7 @@ Before adding anything:
    topics and index both.
 4. **Keep `INDEX.md` exact.** One line per file, no orphans, no unindexed files.
 
-`harness/memcheck.sh` reports over-budget files, unindexed files, and index lines pointing at
+the loop's memcheck report reports over-budget files, unindexed files, and index lines pointing at
 files that no longer exist. The wrapper pastes its output into the builder's prompt, so
 MAINTAIN starts from a concrete worklist rather than good intentions.
 

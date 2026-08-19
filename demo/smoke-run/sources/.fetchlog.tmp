@@ -1,9 +1,0 @@
-sqlite-whentouse	https://www.sqlite.org/whentouse.html	2026-08-17T22:29:50Z	200 21223 text/html; charset=utf-8
-sqlite-wal	https://www.sqlite.org/wal.html	2026-08-17T22:29:52Z	200 41826 text/html; charset=utf-8
-sqlite-lts	https://www.sqlite.org/lts.html	2026-08-17T22:29:53Z	200 7930 text/html; charset=utf-8
-sqlite-cli	https://www.sqlite.org/cli.html	2026-08-17T22:29:54Z	200 93803 text/html; charset=utf-8
-sqlite-changes	https://www.sqlite.org/changes.html	2026-08-17T22:29:55Z	200 473582 text/html; charset=utf-8
-duckdb-sigmod19	https://duckdb.org/pdf/SIGMOD2019-demo-duckdb.pdf	2026-08-17T22:29:57Z	200 974371 application/pdf
-duckdb-cidr20	https://duckdb.org/pdf/CIDR2020-raasveldt-muehleisen-duckdb.pdf	2026-08-17T22:29:58Z	200 197233 application/pdf
-duckdb-pvldb-hashjoin	https://www.vldb.org/pvldb/vol18/p2748-kuiper.pdf	2026-08-17T22:29:58Z	200 1756396 application/pdf
-excluded-why-duckdb	https://duckdb.org/why_duckdb	2026-08-17T22:30:04Z	200 276241 text/html; charset=utf-8
