@@ -42,7 +42,7 @@ import {
 } from "./types.js";
 import type { HarnessConfig, PromptLanguage } from "./types.js";
 import { normaliseReasoningEffort } from "./agent_registry.js";
-import { probeAgentCli } from "./utils/agent_cli.js";
+import { probeAgentCli, which } from "./utils/agent_cli.js";
 import type { AgentAdapter } from "./adapters/base.js";
 import type { DashboardState } from "./dashboard/state.js";
 import type { Environment } from "./environment/base.js";
@@ -2840,6 +2840,97 @@ function _docker(argv: string[], options: { inherit?: boolean } = {}): { status:
   return { status: result.status ?? 1, stdout: result.stdout ?? "" };
 }
 
+
+// --- `start` GUI preflight -------------------------------------------------
+// The sandbox image bakes playwright-mcp + Chromium; the host has to be
+// checked (and set up) so GUI subtasks are not silently browserless.
+
+export function systemChromePath(): string | null {
+  if (process.platform === "darwin") {
+    for (const candidate of [
+      "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+      "/Applications/Chromium.app/Contents/MacOS/Chromium",
+      `${os.homedir()}/Applications/Google Chrome.app/Contents/MacOS/Google Chrome`,
+    ]) {
+      if (_isFile(candidate)) return candidate;
+    }
+    return null;
+  }
+  for (const candidate of ["google-chrome", "google-chrome-stable", "chromium", "chromium-browser", "chrome"]) {
+    const resolved = which(candidate);
+    if (resolved) return resolved;
+  }
+  return null;
+}
+
+/** Args for the playwright MCP server given what this host can launch. */
+export function guiBrowserArgs(chromiumDownloaded: boolean, chromeAvailable: boolean): string[] | null {
+  if (chromiumDownloaded) return ["--headless", "--isolated", "--no-sandbox"];
+  // Playwright's `chrome` channel launches the system browser: no download.
+  if (chromeAvailable) return ["--headless", "--isolated", "--browser", "chrome"];
+  return null;
+}
+
+/** Ensure a computer-use MCP server is configured for host runs; never fatal. */
+async function _ensureHostComputerUse(): Promise<void> {
+  try {
+    const { activePluginForAgent } = await import("./plugins/state.js");
+    const active = activePluginForAgent("claude_code");
+    if (active) {
+      print(`[OK  ] Computer use: ${active[0]} is configured for GUI subtasks`);
+      return;
+    }
+    print("[.. ] Computer use: no browser server configured; setting up playwright-mcp…");
+    const { getCommunityPlugin, installCommunityPlugin } = await import("./plugins/community_computer_use.js");
+    const { writeMcpConfig, recordInstall } = await import("./plugins/state.js");
+    const plugin = getCommunityPlugin("playwright-mcp");
+    // Install the npm package without activation; the browser decision is ours.
+    await installCommunityPlugin(plugin, { agents: ["claude_code"], activate: false, onStatus: null });
+    const download = child_process.spawnSync("npx", ["--yes", "playwright", "install", "chromium"], {
+      encoding: "utf-8",
+      timeout: 240_000,
+    });
+    const args = guiBrowserArgs(download.status === 0, systemChromePath() !== null);
+    if (!args) {
+      eprint("[WARN] Computer use: Chromium could not be downloaded and no system Chrome was found.");
+      eprint("       GUI subtasks will have no browser; run `lh-harness plugin install playwright-mcp` after fixing network access.");
+      return;
+    }
+    const config = writeMcpConfig("playwright-mcp", "claude_code", {
+      serverName: "playwright",
+      command: "playwright-mcp",
+      args,
+    });
+    recordInstall("playwright-mcp", { agents: ["claude_code"], mcpConfigs: { claude_code: config }, mcpServerName: "playwright" });
+    print(
+      args.includes("chrome")
+        ? "[OK  ] Computer use: playwright-mcp will drive the system Chrome headlessly (no download needed)"
+        : "[OK  ] Computer use: playwright-mcp + downloaded Chromium ready",
+    );
+  } catch (exc) {
+    eprint(`[WARN] Computer use setup failed (${_text(exc)}); GUI subtasks will have no browser.`);
+    eprint("       Run `lh-harness plugin install playwright-mcp` manually.");
+  }
+}
+
+/** Prove the sandbox image really carries the browser stack; never fatal. */
+function _verifySandboxGui(): void {
+  const probe = _docker([
+    "run",
+    "--rm",
+    "--entrypoint",
+    "sh",
+    "lh-harness:latest",
+    "-lc",
+    'test -f "$LH_HARNESS_CLAUDECODE_MCP_CONFIG" && command -v playwright-mcp >/dev/null && command -v chromium >/dev/null',
+  ]);
+  if (probe.status === 0) {
+    print("[OK  ] Sandbox GUI: playwright-mcp + headless Chromium verified in the image");
+  } else {
+    eprint("[WARN] Sandbox GUI probe failed: the image is missing playwright-mcp or Chromium; GUI subtasks will have no browser. Rebuild with `docker build -f docker/Dockerfile -t lh-harness:latest .`.");
+  }
+}
+
 async function _startCommand(args: Namespace): Promise<number> {
   const workspace = process.cwd();
   const port = Number(args["port"]);
@@ -2850,7 +2941,10 @@ async function _startCommand(args: Namespace): Promise<number> {
   } else {
     print(`Using config: ${path.resolve(PROJECT_CONFIG_PATH)}`);
   }
-  if (!args["docker"]) return await _startHost(workspace, port, Boolean(args["no_open"]));
+  if (!args["docker"]) {
+    await _ensureHostComputerUse();
+    return await _startHost(workspace, port, Boolean(args["no_open"]));
+  }
   return await _startDocker(workspace, port, Boolean(args["no_open"]));
 }
 
@@ -2920,6 +3014,7 @@ async function _startDocker(workspace: string, port: number, noOpen: boolean): P
     eprint("Image build failed; see the output above.");
     return 2;
   }
+  _verifySandboxGui();
   const token = ensureWebToken(workspace);
   const name = startContainerName(workspace);
   const inspect = _docker(["inspect", "--format", "{{.State.Status}} {{range $p, $b := .NetworkSettings.Ports}}{{range $b}}{{.HostPort}}{{end}}{{end}}", name]);

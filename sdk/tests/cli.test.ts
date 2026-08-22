@@ -16,6 +16,7 @@ import { after, test } from "node:test";
 import {
   adoptSupervisedRunDir,
   ensureWebToken,
+  guiBrowserArgs,
   startContainerName,
   applyRepeatableDefaults,
   buildParser,
@@ -1001,4 +1002,11 @@ test("start helpers: per-folder container names and a persistent web token", () 
   assert.equal(ensureWebToken(base), token, "the token must persist across starts");
   const mode = fs.statSync(path.join(base, ".lh-harness", "web-token")).mode & 0o777;
   assert.equal(mode, 0o600);
+});
+
+test("start GUI preflight picks a launchable browser configuration", () => {
+  assert.deepEqual(guiBrowserArgs(true, true), ["--headless", "--isolated", "--no-sandbox"]);
+  assert.deepEqual(guiBrowserArgs(true, false), ["--headless", "--isolated", "--no-sandbox"]);
+  assert.deepEqual(guiBrowserArgs(false, true), ["--headless", "--isolated", "--browser", "chrome"]);
+  assert.equal(guiBrowserArgs(false, false), null);
 });

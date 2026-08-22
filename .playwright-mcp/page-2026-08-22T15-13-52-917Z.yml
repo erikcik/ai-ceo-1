@@ -1,0 +1,3 @@
+- generic [active] [ref=e1]:
+  - heading "Chromium inside the container says hi" [level=1] [ref=e2]
+  - button "Order placemats" [ref=e3]

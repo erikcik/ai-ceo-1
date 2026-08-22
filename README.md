@@ -119,11 +119,12 @@ matching CLI flag; CLI > config > defaults.
 
 ### GUI / browser tasks
 
-Inside `--docker`, web-GUI subtasks work out of the box (Playwright MCP +
-headless Chromium are baked into the image; executors and auditors can
-navigate, click, type and screenshot). On the host, install a computer-use
-plugin instead: `lh-harness plugin install playwright-mcp` (web) or
-`open-computer-use` / `clawdcursor` (native desktop).
+`start` handles this: in `--docker` the image bakes Playwright MCP + headless
+Chromium (probed on every start); on the host, `start` auto-configures
+`playwright-mcp`, downloading Chromium or — when the download host is blocked —
+driving your installed Chrome headlessly. Executors and auditors can then
+navigate, click, type and screenshot web pages. For native desktop apps
+install `open-computer-use` or `clawdcursor` via `lh-harness plugin install`.
 
 ## License / provenance
 
