@@ -1,0 +1,12 @@
+{
+  "orca": {
+    "baseUrl": "https://www.orcarouter.ai",
+    "apiKeyEnv": "ORCA_API_KEY",
+    "wire": "openai",
+    "extraBody": { "chat_template_kwargs": { "enable_thinking": false } },
+    "models": [
+      { "id": "obsidian/Qwen3.8-27B", "label": "Qwen3.8 27B Uncensored (OrcaRouter)" }
+    ],
+    "note": "OrcaRouter (orcarouter.ai). Model ids as returned by GET /v1/models, e.g. obsidian/Qwen3.8-27B. Uses the OpenAI wire via the local shim: the router's Anthropic wire ignores every thinking-off switch for large prompts (verified 2026-08-20), and only chat_template_kwargs.enable_thinking=false on /v1/chat/completions actually stops Qwen reasoning."
+  }
+}

@@ -1,68 +1,52 @@
-# ai-ceo harness on the Claude Agent SDK
+# lh-harness (TypeScript, Claude Agent SDK)
 
-The original bash harness (`harness/*.sh` + `.claude/hooks/*.sh`, now only in git history), re-implemented as a
-TypeScript program on `@anthropic-ai/claude-agent-sdk`. Same three-agent design,
-same file-based state, same gates -- different enforcement point.
-
-## What moved where
-
-| bash harness | sdk harness |
-|---|---|
-| `.claude/settings.json` wiring 8 hook scripts | `src/gates.ts` -- one module, passed to every `query()` as in-process hooks |
-| `harness/plan.sh` (planner + rubric reviewer) | `src/plan.ts` |
-| `harness/loop.sh` (build -> judge -> scoreboard) | `src/loop.ts` |
-| `harness/scoreboard.sh` (only writer) | `src/scoreboard.ts` (only caller: the loop) |
-| `harness/planlock.sh` | `src/planlock.ts` |
-| `harness/memcheck.sh` | `src/memcheck.ts` |
-| `harness/selftest.sh` (64 checks) | `src/selftest.ts` (48 checks, pure functions) |
-| `.claude/agents/*.md` + `.claude/CLAUDE.md` contract | `prompts/*.md`, prepended per session |
-| `.claude/hooks/danger-patterns.txt` | `danger-patterns.txt` (same format, fail-closed) |
-| repo root doubles as task workspace | **separate task directory** (`../runs/<task>/`, own git repo) |
-
-## Why the SDK version is structurally stronger
-
-1. **The frozen core is now out of reach, not just guarded.** Hooks used to be
-   files inside the workspace, defended by a regex (`frozen-guard.sh`) that
-   SECURITY.md admitted was not a boundary. Now the gates run in the harness
-   *process*; a session cannot read, edit, or route around them, and
-   `settingSources: []` means no `.claude/` directory influences a session at all.
-2. **The operator's own sessions are free.** Opening `claude` in this repo
-   loads no hooks at all -- the bash implementation was removed after the
-   transformation (it survives in git history). Editing the harness happens in
-   a normal session; only the sessions the harness *spawns* are gated. The
-   "why can't I edit doctor.sh" confusion is gone because the answer is now:
-   you can.
-3. **Typed verdicts.** The judge's verdict is read from the SDK's `result`
-   message, not scraped from a log file. A crashed judge (no verdict) and a
-   failing verdict are different values by construction; the loop retries one
-   and halts on two, exactly like the bash version, minus the awk.
-4. **Harness ≠ workspace.** Each task lives in its own directory with its own
-   git history; the write sandbox denies any session write outside it. Running
-   the harness on itself is no longer a special case to defend against.
-
-What did NOT change: every file the PDF explains -- `LEVELS.md`, `EVIDENCE.md`,
-`RUBRIC.md`, `SCOREBOARD.json` (default-FAIL, wrapper-written), `PROGRESS.md`
-(8k budget), `NEXT_FINDINGS.md`, `PAUSED_ACTIONS.md`, `AGENT_STOP`, `STEER.md`,
-`memory/` with GROW/MAINTAIN/FETCH, `evidence/level-*/CLAIM.md` -- keeps its
-name, location (task dir root), and meaning. Files-as-state is the design;
-only the enforcement moved.
-
-## Use
+A module-for-module port of LongHorizon-Harness's `src/lh_harness/` Python
+package. Same loop, same roles, same prompts, same file formats, same CLI, same
+dashboard protocol — the agent episode runs through `query()` from
+`@anthropic-ai/claude-agent-sdk` instead of a `claude --print` subprocess.
 
 ```bash
-cd sdk && npm install
-npm run selftest                       # gate assertions, no API calls
-
-npm run plan -- ../runs/mytask -f INIT_PROMPT.md   # or an inline "Task: ..." string
-# read LEVELS.md / RUBRIC.md / RUBRIC_REVIEW.md, fix, then approve by running:
-npm run loop -- ../runs/mytask
-npm run status -- ../runs/mytask
+npm install && npm run build:web
+node bin/lh-harness.mjs doctor
+node bin/lh-harness.mjs init
+node bin/lh-harness.mjs web --workspace-root .
+node bin/lh-harness.mjs run --task @task.md
+npm test                                 # node:test ports of the upstream test-suite
+npm run typecheck
 ```
 
-Env (all opt-in, unset = the claude CLI's configured default):
-`PLANNER_MODEL`, `REVIEWER_MODEL`, `BUILDER_MODEL`, `EVALUATOR_MODEL`,
-`MAX_CYCLES` (12), `PROGRESS_BUDGET_TOKENS` (8000).
+## Module map (Python → TypeScript)
 
-Mid-run controls, unchanged: `touch <taskdir>/AGENT_STOP` halts after the
-current call; write to `<taskdir>/STEER.md` to redirect the builder; progress in
-`<taskdir>/logs/loop.log`.
+| upstream `src/lh_harness/` | here `src/` | notes |
+|---|---|---|
+| `types.py` | `types.ts` | snake_case fields on every record that reaches disk |
+| `prompt_texts.py`, `role_prompts.py` | `prompt_texts.ts`, `role_prompts.ts` | English-only: the upstream `zh` prompt catalog, route markers, and transcript headings were removed; `tests/golden/` snapshots pin the current English output |
+| `manager.py` | `manager.ts` | the round loop, `events.jsonl` + `rounds.jsonl` ledgers, `report.json` schema 2, human gate, resume, continue-after-finish, final response |
+| `auditor_agent.py` | `auditor_agent.ts` | control-header parsing, blocking-constraint guard, workspace-mutation cross-check |
+| `runtime_signals.py`, `agent_logs.py`, `trajectory_artifacts.py` | same names | differential-tested against the Python |
+| `provider_errors.py`, `agent_registry.py`, `model_catalog.py`, `config.py` | same names | registry has one backend: `claude_code`; catalog appends `<provider>:<model>` ids from `providers.json` |
+| `adapters/claude_code.py`, `claude_permissions.py`, `cli_agent.py`, `base.py` | `adapters/*.ts` | role policies, path deny rules, snapshot guard; episodes via the Agent SDK |
+| `environment/{base,local,remote_files}.py` | `environment/*.ts` | `local` only, as upstream |
+| `supervisor/{service,control_bus,lifecycle}.py` | `supervisor/*.ts` | file-based control bus under `<run>/control/`; lockfile instead of `flock` |
+| `dashboard/{state,gate,rules}.py` | `dashboard/*.ts` | snapshot projection and the five human-gate triggers |
+| `webapi/{server,events,models,protocol,snapshot}.py` | `webapi/*.ts` | `node:http` + `ws`; same routes, auth, WS subprotocols, close codes |
+| `plugins/*.py` | `plugins/*.ts` | `open-computer-use`, `clawdcursor` (npm MCP servers); codex plugin not ported |
+| `utils/*.py` | `utils/*.ts` | + `pystr.ts` for Python string semantics |
+| `cli.py` | `cli.ts` | `init · run · web · dashboard · doctor · plugin · check-update` |
+| `frontend/core`, `frontend/web` | `frontend/core`, `frontend/web` | copied verbatim; pickers narrowed to `claude_code` |
+
+Not ported, by design: the `codex`, `opencode`, `deepseek_harness` adapters and
+the Codex-bundled computer-use plugin (the Agent SDK is the single backend;
+third-party models go through `providers.json` + `shim.ts`), and `eval/`
+(frozen benchmark snapshots).
+
+## Third-party model providers
+
+`providers.json` declares Anthropic-compatible or OpenAI-compatible endpoints:
+base URL, the *name* of the env var holding the key, wire format, optional
+`extraBody` (e.g. vLLM `chat_template_kwargs.enable_thinking=false`), and the
+models to offer in the workbench. A model id `<provider>:<model>` routes that
+role's episodes through the local shim (`shim.ts`): Anthropic wire → thinking
+forced off; OpenAI wire → full request/response translation. The operator's
+Anthropic credentials are stripped from provider-routed episodes, and
+`WebSearch`/`WebFetch` are unavailable behind a third-party base URL.

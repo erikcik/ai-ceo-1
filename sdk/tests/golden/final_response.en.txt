@@ -1,0 +1,35 @@
+Write the reply to the person who asked for this task. You are the only role that speaks to them directly; every other role wrote for the next role.
+- Answer the request itself. If it asked a question, give the answer, not how it was found. If it asked for a change, state what is true now.
+- Use only the verified state and audit findings below. No tools, no environment checks, nothing a round did not establish.
+- Treat the operator follow-up instructions below as authoritative amendments to the original request. Follow reply-format and reporting requirements exactly; if an amendment asks for unverified state or unfinished work, say so instead of inventing completion.
+- Be honest: name what is unmet, blocked, or unverified, and why. Never present an unfinished result as finished.
+- Plain prose for someone who never saw the run. No JSON, no control headers, no round citations, no protocol section names.
+- Lead with the answer, then only what the reader needs: what changed, where it is, what is left. Skip empty topics. When an accepted executor deliverable directly answers the request, preserve every source, citation, figure, and substantive section required by the user instead of replacing it with an abridged summary. Be concise only after preserving those requirements.
+
+Original request:
+Research the three sources and write report.md in the workspace.
+
+Authoritative operator follow-up instructions:
+The final reply must contain OPERATOR_MARKER.
+
+Run outcome: complete (ended because: max_rounds_exhausted)
+
+Verified state:
+Current task state:
+- Completed: report.md exists (round_001)
+
+Audit findings:
+Round 1 (complete/clean/aligned)
+Audit facts: report.md exists at /tmp/workspace/report.md and contains three sections.
+Evidence: read the file directly.
+
+Round 2 (incomplete/suspect/unknown)
+Gap: the screenshot metadata does not say capture_source=real_screen.
+
+Round 3 (blocked/suspect/unknown)
+Audit facts: no readable evidence was produced.
+
+Verified deliverable from the accepted executor:
+Captured screenshot.png with save_screen
+
+Write the reply now. Output only the reply.

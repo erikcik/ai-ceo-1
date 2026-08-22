@@ -1,20 +1,35 @@
 {
-  "name": "ai-ceo-sdk",
-  "version": "1.0.0",
-  "description": "ai-ceo-1 harness re-implemented on the Claude Agent SDK: planner -> rubric review -> approval -> build/judge loop, with all gates enforced in-process.",
+  "name": "lh-harness",
+  "version": "0.1.7",
+  "description": "LongHorizon-Harness (Manager -> Executor -> Auditor loop engineering) ported 1:1 to TypeScript on the Claude Agent SDK.",
   "type": "module",
   "scripts": {
-    "plan": "tsx src/plan.ts",
-    "loop": "tsx src/loop.ts",
-    "status": "tsx src/status.ts",
-    "selftest": "tsx src/selftest.ts"
+    "lh-harness": "node bin/lh-harness.mjs",
+    "typecheck": "tsc --noEmit",
+    "test": "node --import tsx --test \"tests/**/*.test.ts\"",
+    "build:web": "npm --prefix frontend/web install && npm --prefix frontend/web run build",
+    "web": "node bin/lh-harness.mjs web",
+    "doctor": "node bin/lh-harness.mjs doctor"
   },
   "dependencies": {
-    "@anthropic-ai/claude-agent-sdk": "^0.3.235"
+    "@anthropic-ai/claude-agent-sdk": "^0.3.235",
+    "smol-toml": "^1.8.0",
+    "ws": "^8.21.3"
   },
   "devDependencies": {
     "@types/node": "^26.2.0",
+    "@types/ws": "^8.18.1",
     "tsx": "^4.23.12",
     "typescript": "^7.0.2"
-  }
+  },
+  "bin": {
+    "lh-harness": "bin/lh-harness.mjs"
+  },
+  "files": [
+    "bin",
+    "src",
+    "providers.json",
+    "frontend/web/dist",
+    "README.md"
+  ]
 }

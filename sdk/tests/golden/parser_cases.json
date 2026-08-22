@@ -1,0 +1,431 @@
+[
+  {
+    "fn": "parse_role_manager_next_step",
+    "args": [
+      "Next: gui"
+    ],
+    "kwargs": {},
+    "expected": "gui"
+  },
+  {
+    "fn": "parse_role_manager_next_step",
+    "args": [
+      "  **Next: cli**  "
+    ],
+    "kwargs": {},
+    "expected": "cli"
+  },
+  {
+    "fn": "parse_role_manager_next_step",
+    "args": [
+      "Next: done — all constraints passed"
+    ],
+    "kwargs": {},
+    "expected": "done"
+  },
+  {
+    "fn": "parse_role_manager_next_step",
+    "args": [
+      "Next: done -- all constraints passed"
+    ],
+    "kwargs": {},
+    "expected": "done"
+  },
+  {
+    "fn": "parse_role_manager_next_step",
+    "args": [
+      "Next: done // done for real"
+    ],
+    "kwargs": {},
+    "expected": "done"
+  },
+  {
+    "fn": "parse_role_manager_next_step",
+    "args": [
+      "Next: done # done"
+    ],
+    "kwargs": {},
+    "expected": "done"
+  },
+  {
+    "fn": "parse_role_manager_next_step",
+    "args": [
+      "Next: done (finished)"
+    ],
+    "kwargs": {},
+    "expected": "done"
+  },
+  {
+    "fn": "parse_role_manager_next_step",
+    "args": [
+      "Next: complete"
+    ],
+    "kwargs": {},
+    "expected": "done"
+  },
+  {
+    "fn": "parse_role_manager_next_step",
+    "args": [
+      "Next: blocked"
+    ],
+    "kwargs": {},
+    "expected": "blocked"
+  },
+  {
+    "fn": "parse_role_manager_next_step",
+    "args": [
+      "Next: ask"
+    ],
+    "kwargs": {},
+    "expected": "ask"
+  },
+  {
+    "fn": "parse_role_manager_next_step",
+    "args": [
+      "Next: done later"
+    ],
+    "kwargs": {},
+    "expected": "invalid"
+  },
+  {
+    "fn": "parse_role_manager_next_step",
+    "args": [
+      "Next: nonsense"
+    ],
+    "kwargs": {},
+    "expected": "invalid"
+  },
+  {
+    "fn": "parse_role_manager_next_step",
+    "args": [
+      ""
+    ],
+    "kwargs": {},
+    "expected": "invalid"
+  },
+  {
+    "fn": "parse_role_manager_next_step",
+    "args": [
+      "Next: gui\nNext: cli"
+    ],
+    "kwargs": {},
+    "expected": "gui"
+  },
+  {
+    "fn": "extract_role_manager_plan_text",
+    "args": [
+      "[thinking] I should first look at the repository.\nSome wrapper heading\nCurrent task state:\n- Completed: nothing (round_001)\nTask contract:\n- Deliver report.md\nDependency assessment:\n- Target state: report.md exists\nNext: cli\nTask:\n- write report.md\nRelated audit reports:\n- round_001 outline, round_2 evidence, round_0 ignored, round_001 duplicate\nRelated audited state:\n- round_11 state\nBoundaries:\n- round_999 must not be collected from here\n"
+    ],
+    "kwargs": {},
+    "expected": "Current task state:\n- Completed: nothing (round_001)\nTask contract:\n- Deliver report.md\nDependency assessment:\n- Target state: report.md exists\nNext: cli\nTask:\n- write report.md\nRelated audit reports:\n- round_001 outline, round_2 evidence, round_0 ignored, round_001 duplicate\nRelated audited state:\n- round_11 state\nBoundaries:\n- round_999 must not be collected from here"
+  },
+  {
+    "fn": "extract_role_manager_plan_text",
+    "args": [
+      "no route line at all"
+    ],
+    "kwargs": {},
+    "expected": "no route line at all"
+  },
+  {
+    "fn": "extract_role_manager_plan_text",
+    "args": [
+      "Next: done\nnothing before the route"
+    ],
+    "kwargs": {},
+    "expected": "Next: done\nnothing before the route"
+  },
+  {
+    "fn": "extract_role_manager_plan_text",
+    "args": [
+      ""
+    ],
+    "kwargs": {},
+    "expected": ""
+  },
+  {
+    "fn": "extract_role_task_state",
+    "args": [
+      "[thinking] I should first look at the repository.\nSome wrapper heading\nCurrent task state:\n- Completed: nothing (round_001)\nTask contract:\n- Deliver report.md\nDependency assessment:\n- Target state: report.md exists\nNext: cli\nTask:\n- write report.md\nRelated audit reports:\n- round_001 outline, round_2 evidence, round_0 ignored, round_001 duplicate\nRelated audited state:\n- round_11 state\nBoundaries:\n- round_999 must not be collected from here\n"
+    ],
+    "kwargs": {},
+    "expected": "Current task state:\n- Completed: nothing (round_001)"
+  },
+  {
+    "fn": "extract_role_task_state",
+    "args": [
+      "no headers here"
+    ],
+    "kwargs": {
+      "fallback": "  previous state  "
+    },
+    "expected": "previous state"
+  },
+  {
+    "fn": "extract_role_task_state",
+    "args": [
+      "Current task state:\nNext: done"
+    ],
+    "kwargs": {
+      "fallback": "prev"
+    },
+    "expected": "Current task state:"
+  },
+  {
+    "fn": "extract_role_task_contract",
+    "args": [
+      "[thinking] I should first look at the repository.\nSome wrapper heading\nCurrent task state:\n- Completed: nothing (round_001)\nTask contract:\n- Deliver report.md\nDependency assessment:\n- Target state: report.md exists\nNext: cli\nTask:\n- write report.md\nRelated audit reports:\n- round_001 outline, round_2 evidence, round_0 ignored, round_001 duplicate\nRelated audited state:\n- round_11 state\nBoundaries:\n- round_999 must not be collected from here\n"
+    ],
+    "kwargs": {},
+    "expected": "Task contract:\n- Deliver report.md"
+  },
+  {
+    "fn": "extract_role_task_contract",
+    "args": [
+      "no headers here"
+    ],
+    "kwargs": {
+      "fallback": "prev contract"
+    },
+    "expected": "prev contract"
+  },
+  {
+    "fn": "extract_related_report_refs",
+    "args": [
+      "[thinking] I should first look at the repository.\nSome wrapper heading\nCurrent task state:\n- Completed: nothing (round_001)\nTask contract:\n- Deliver report.md\nDependency assessment:\n- Target state: report.md exists\nNext: cli\nTask:\n- write report.md\nRelated audit reports:\n- round_001 outline, round_2 evidence, round_0 ignored, round_001 duplicate\nRelated audited state:\n- round_11 state\nBoundaries:\n- round_999 must not be collected from here\n"
+    ],
+    "kwargs": {},
+    "expected": [
+      "round_001",
+      "round_002",
+      "round_011"
+    ]
+  },
+  {
+    "fn": "extract_related_report_refs",
+    "args": [
+      "round_007 mentioned with no section at all"
+    ],
+    "kwargs": {},
+    "expected": [
+      "round_007"
+    ]
+  },
+  {
+    "fn": "extract_related_report_refs",
+    "args": [
+      ""
+    ],
+    "kwargs": {},
+    "expected": []
+  },
+  {
+    "fn": "extract_role_manager_question",
+    "args": [
+      "Next: ask\nQuestion: Which directory should the export land in?\n"
+    ],
+    "kwargs": {},
+    "expected": "Which directory should the export land in?"
+  },
+  {
+    "fn": "extract_role_manager_question",
+    "args": [
+      "no question here"
+    ],
+    "kwargs": {},
+    "expected": ""
+  },
+  {
+    "fn": "extract_role_manager_answer_choices",
+    "args": [
+      "Next: ask\nQuestion: Which directory should the export land in?\n"
+    ],
+    "kwargs": {},
+    "expected": []
+  },
+  {
+    "fn": "extract_role_manager_answer_choices",
+    "args": [
+      "Next: ask\nQuestion: Should I proceed, yes / no?"
+    ],
+    "kwargs": {},
+    "expected": [
+      "Yes",
+      "No"
+    ]
+  },
+  {
+    "fn": "extract_role_manager_answer_choices",
+    "args": [
+      "Next: ask\nQuestion: Tell me whether to proceed."
+    ],
+    "kwargs": {},
+    "expected": [
+      "Yes",
+      "No"
+    ]
+  },
+  {
+    "fn": "_round_ref_to_index",
+    "args": [
+      "round_012"
+    ],
+    "kwargs": {},
+    "expected": 12
+  },
+  {
+    "fn": "_round_ref_to_index",
+    "args": [
+      "nothing"
+    ],
+    "kwargs": {},
+    "expected": null
+  },
+  {
+    "fn": "_round_ref_to_index",
+    "args": [
+      ""
+    ],
+    "kwargs": {},
+    "expected": null
+  },
+  {
+    "fn": "_clip_preserve",
+    "args": [
+      "abcdefghij",
+      0
+    ],
+    "kwargs": {},
+    "expected": "abcdefghij"
+  },
+  {
+    "fn": "_clip_preserve",
+    "args": [
+      "abcdefghij",
+      20
+    ],
+    "kwargs": {},
+    "expected": "abcdefghij"
+  },
+  {
+    "fn": "_clip_preserve",
+    "args": [
+      "abcdefghij",
+      5
+    ],
+    "kwargs": {},
+    "expected": "abc\n\n...[truncated 5 chars; kept head and tail]...\n\nij"
+  },
+  {
+    "fn": "_clip_preserve",
+    "args": [
+      "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA \n BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
+      40
+    ],
+    "kwargs": {},
+    "expected": "AAAAAAAAAAAAAAAAAAAAAAAAAA\n\n...[truncated 163 chars; kept head and tail]...\n\nBBBBBBBBBBBBBB"
+  },
+  {
+    "fn": "format_verified_intermediate_context",
+    "args": [
+      "__ROUNDS__"
+    ],
+    "kwargs": {
+      "max_chars": 4000,
+      "language": "en"
+    },
+    "expected": "--- Round 1 auditor report ---\nround_id: round_001\nAssigned subtask:\nCurrent task state:\n- Completed: nothing yet\n- Incomplete: the report\n\nTask contract:\n- Final state carrier: report.md in the workspace\n\nDependency assessment:\n- Target state: report.md exists\n\nNext: cli\nTask:\n- write report.md\nRelated audit reports:\n- round_001 because it established the outline\nBoundaries:\n- do not touch other files\nOriginal auditor report:\nStatus: complete\nIntegrity: clean\nContract audit: aligned\nAudit facts: report.md exists at /tmp/workspace/report.md and contains three sections.\nEvidence: read the file directly.\nAcceptance-constraint backcheck:\nContract conclusion: aligned\nBlocking constraints: none\nState update for manager:\n- report.md is verified\n\n--- Round 2 auditor report ---\nround_id: round_002\nAssigned subtask:\nNext: gui\nTask:\n- capture a real-screen screenshot of the app\nOriginal auditor report:\nStatus: incomplete\nIntegrity: suspect\nContract audit: unknown\nGap: the screenshot metadata does not say capture_source=real_screen.\nAcceptance-constraint backcheck:\nContract conclusion: unknown\nBlocking constraints: screenshot provenance\n\n--- Round 3 auditor report ---\nround_id: round_003\nAssigned subtask:\n(none)\nOriginal auditor report:\nStatus: blocked\nIntegrity: suspect\nContract audit: unknown\nAudit facts: no readable evidence was produced."
+  },
+  {
+    "fn": "format_verified_intermediate_context",
+    "args": [
+      "__ROUNDS__"
+    ],
+    "kwargs": {
+      "max_chars": 300,
+      "language": "en"
+    },
+    "expected": "--- Round 1 auditor report ---\nround_id: round_001\nAssigned subtask:\nCurrent task state:\n- Completed: nothing yet\n- Incomplete: the report\n\nTask contract:\n- Final state carrier: report.md in the\n\n...[truncated 1052 chars; kept head and tail]...\n\ntatus: blocked\nIntegrity: suspect\nContract audit: unknown\nAudit facts: no readable evidence was produced."
+  },
+  {
+    "fn": "format_related_auditor_reports",
+    "args": [
+      "__ROUNDS__",
+      [
+        "round_001",
+        "round_3",
+        "round_099"
+      ]
+    ],
+    "kwargs": {
+      "max_chars": 4000,
+      "language": "en"
+    },
+    "expected": "--- Round 1 auditor report ---\nround_id: round_001\nAssigned subtask:\nCurrent task state:\n- Completed: nothing yet\n- Incomplete: the report\n\nTask contract:\n- Final state carrier: report.md in the workspace\n\nDependency assessment:\n- Target state: report.md exists\n\nNext: cli\nTask:\n- write report.md\nRelated audit reports:\n- round_001 because it established the outline\nBoundaries:\n- do not touch other files\nOriginal auditor report:\nStatus: complete\nIntegrity: clean\nContract audit: aligned\nAudit facts: report.md exists at /tmp/workspace/report.md and contains three sections.\nEvidence: read the file directly.\nAcceptance-constraint backcheck:\nContract conclusion: aligned\nBlocking constraints: none\nState update for manager:\n- report.md is verified\n\n--- Round 3 auditor report ---\nround_id: round_003\nAssigned subtask:\n(none)\nOriginal auditor report:\nStatus: blocked\nIntegrity: suspect\nContract audit: unknown\nAudit facts: no readable evidence was produced."
+  },
+  {
+    "fn": "format_related_auditor_reports",
+    "args": [
+      "__ROUNDS__",
+      []
+    ],
+    "kwargs": {
+      "max_chars": 4000,
+      "language": "en"
+    },
+    "expected": ""
+  },
+  {
+    "fn": "format_harness_feedback_context",
+    "args": [
+      "__ROUNDS__"
+    ],
+    "kwargs": {
+      "max_chars": 4000
+    },
+    "expected": "--- Round 2 harness feedback ---\nStatus: incomplete\nIntegrity: suspect\nContract audit: unknown\nAudit facts: the manager requested completion, but the latest auditor report did not confirm every original requirement."
+  },
+  {
+    "fn": "format_harness_feedback_context",
+    "args": [
+      "__ROUNDS__"
+    ],
+    "kwargs": {
+      "max_chars": 60
+    },
+    "expected": "--- Round 2 harness feedback ---\nStatus\n\n...[truncated 155 chars; kept head and tail]...\n\noriginal requirement."
+  },
+  {
+    "fn": "format_audit_findings",
+    "args": [
+      "__ROUNDS__"
+    ],
+    "kwargs": {
+      "max_chars": 4000,
+      "language": "en"
+    },
+    "expected": "Round 1 (complete/clean/aligned)\nAudit facts: report.md exists at /tmp/workspace/report.md and contains three sections.\nEvidence: read the file directly.\n\nRound 2 (incomplete/suspect/unknown)\nGap: the screenshot metadata does not say capture_source=real_screen.\n\nRound 3 (blocked/suspect/unknown)\nAudit facts: no readable evidence was produced."
+  },
+  {
+    "fn": "format_management_history",
+    "args": [
+      "__ROUNDS__"
+    ],
+    "kwargs": {
+      "include_empty": false,
+      "max_chars": 6000
+    },
+    "expected": "--- Round 1: cli ---\nStable task contract:\nTask contract:\n- Final state carrier: report.md\nManager subtask:\nCurrent task state:\n- Completed: nothing yet\n- Incomplete: the report\n\nTask contract:\n- Final state carrier: report.md in the workspace\n\nDependency assessment:\n- Target state: report.md exists\n\nNext: cli\nTask:\n- write report.md\nRelated audit reports:\n- round_001 because it established the outline\nBoundaries:\n- do not touch other files\nExecutor agent output:\nWrote /tmp/workspace/report.md with three sections and two citations.\nAuditor natural-language report:\nStatus: complete\nIntegrity: clean\nContract audit: aligned\nAudit facts: report.md exists at /tmp/workspace/report.md and contains three sections.\nEvidence: read the file directly.\nAcceptance-constraint backcheck:\nContract conclusion: aligned\nBlocking constraints: none\nState update for manager:\n- report.md is verified\nHarness management feedback:\n(none)\n\n--- Round 2: gui ---\nStable task contract:\n(none)\nManager subtask:\nNext: gui\nTask:\n- capture a real-screen screenshot of the app\nExecutor agent output:\nCaptured screenshot.png with save_screenshot.\nAuditor natural-language report:\nStatus: incomplete\nIntegrity: suspect\nContract audit: unknown\nGap: the screenshot metadata does not say capture_source=real_screen.\nAcceptance-constraint backcheck:\nContract conclusion: unknown\nBlocking constraints: screenshot provenance\nHarness management feedback:\nStatus: incomplete\nIntegrity: suspect\nContract audit: unknown\nAudit facts: the manager requested completion, but the latest auditor report did not confirm every original requirement.\n\n--- Round 3: cli ---\nStable task contract:\n(none)\nManager subtask:\n\nExecutor agent output:\n(none)\nAuditor natural-language report:\nStatus: blocked\nIntegrity: suspect\nContract audit: unknown\nAudit facts: no readable evidence was produced.\nHarness management feedback:\n(none)"
+  },
+  {
+    "fn": "format_management_history",
+    "args": [
+      "__ROUNDS__"
+    ],
+    "kwargs": {
+      "include_empty": true,
+      "max_chars": 6000
+    },
+    "expected": "--- Round 1: cli ---\nStable task contract:\nTask contract:\n- Final state carrier: report.md\nManager subtask:\nCurrent task state:\n- Completed: nothing yet\n- Incomplete: the report\n\nTask contract:\n- Final state carrier: report.md in the workspace\n\nDependency assessment:\n- Target state: report.md exists\n\nNext: cli\nTask:\n- write report.md\nRelated audit reports:\n- round_001 because it established the outline\nBoundaries:\n- do not touch other files\nExecutor agent output:\nWrote /tmp/workspace/report.md with three sections and two citations.\nAuditor natural-language report:\nStatus: complete\nIntegrity: clean\nContract audit: aligned\nAudit facts: report.md exists at /tmp/workspace/report.md and contains three sections.\nEvidence: read the file directly.\nAcceptance-constraint backcheck:\nContract conclusion: aligned\nBlocking constraints: none\nState update for manager:\n- report.md is verified\nHarness management feedback:\n(none)\n\n--- Round 2: gui ---\nStable task contract:\n(none)\nManager subtask:\nNext: gui\nTask:\n- capture a real-screen screenshot of the app\nExecutor agent output:\nCaptured screenshot.png with save_screenshot.\nAuditor natural-language report:\nStatus: incomplete\nIntegrity: suspect\nContract audit: unknown\nGap: the screenshot metadata does not say capture_source=real_screen.\nAcceptance-constraint backcheck:\nContract conclusion: unknown\nBlocking constraints: screenshot provenance\nHarness management feedback:\nStatus: incomplete\nIntegrity: suspect\nContract audit: unknown\nAudit facts: the manager requested completion, but the latest auditor report did not confirm every original requirement.\n\n--- Round 3: cli ---\nStable task contract:\n(none)\nManager subtask:\n\nExecutor agent output:\n(none)\nAuditor natural-language report:\nStatus: blocked\nIntegrity: suspect\nContract audit: unknown\nAudit facts: no readable evidence was produced.\nHarness management feedback:\n(none)\n\n--- Round 4: done ---\nStable task contract:\n(none)\nManager subtask:\n\nExecutor agent output:\n(none)\nAuditor natural-language report:\n(none)\nHarness management feedback:\n(none)"
+  }
+]

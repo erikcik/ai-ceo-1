@@ -1,16 +1,17 @@
-# Ephemeral state the hooks read/write at runtime; never commit.
-.claude/.evidence-reads
-AGENT_STOP
-STEER.md
-
-# Nothing else is ignored, on purpose. Everything a run produces -- LEVELS.md,
-# EVIDENCE.md, RUBRIC.md, SCOREBOARD.json, PROGRESS.md, PAUSED_ACTIONS.md,
-# memory/, evidence/, logs/ -- is committed by the wrapper each cycle, because
-# `git log` being a real record of what the loop did is part of the handoff, not
-# an accident. Your clone accumulates its own task history; that is the design.
-#
-# The template repo simply ships with none of those files present, so a fresh
-# clone starts clean.
+# Run records and per-project harness state (config.toml is yours to commit if you want it).
+.lh-harness/
+workspace/
 runs/
-sdk/node_modules/
-.playwright-mcp/
+logs/
+results/
+tmp/
+
+# Node
+node_modules/
+sdk/frontend/web/dist/
+
+# Container auth -- tokens live here at run time, never committed.
+docker/.env
+
+# Generated MCP configs can embed secrets.
+*.mcp.json

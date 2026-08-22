@@ -1,0 +1,16 @@
+Your previous auditor report lacks a valid three-line control header. This is formatting repair, not a new audit: use no tools and change no environment state. Re-emit the same report from its existing content only.
+
+The first three nonempty lines must be exactly one value from each group:
+Status: complete | Status: incomplete | Status: blocked
+Integrity: clean | Integrity: suspect | Integrity: violation
+Contract audit: aligned | Contract audit: unknown | Contract audit: needs_revision | Contract audit: invalid
+
+Use aligned only when the report's acceptance-constraint backcheck explicitly supports it. If the conclusion cannot be determined, conservatively use:
+Status: blocked
+Integrity: suspect
+Contract audit: unknown
+
+Previous auditor report:
+(empty report)
+
+Output only the repaired auditor report. Do not explain the repair and do not output JSON.
