@@ -526,6 +526,11 @@ export class ClaudeCodeAdapter extends CommandAgentAdapter {
     return base;
   }
 
+  /** The MCP servers this role will hand to the SDK (null for no-tool roles). */
+  computerUseServers(): Record<string, unknown> | null {
+    return this.loadMcpServers();
+  }
+
   private loadMcpServers(): Record<string, unknown> | null {
     if (!this.plan.mcpConfigPath) return null;
     try {

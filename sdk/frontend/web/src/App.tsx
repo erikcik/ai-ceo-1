@@ -1880,18 +1880,38 @@ function TrajectoryDetail({ data, error, onRetry }: { data: TrajectoryView | nul
   </div>;
 }
 
-function inlineMessageText(text: string): ReactNode[] {
+// ---------------------------------------------------------------------------
+// Markdown rendering
+//
+// Manager plans, auditor reports and executor summaries are authored as
+// markdown, so the conversation renders the block structure the agents wrote:
+// headings, ordered/unordered (and nested) lists, quotes, rules and fenced
+// code, with inline code/emphasis/links inside every one of them. A plan read
+// as one undifferentiated paragraph is the single worst way to review it.
+// ---------------------------------------------------------------------------
+
+const INLINE_PATTERN = /(`[^`\n]+`|\*\*[^*\n]+\*\*|__[^_\n]+__|\*[^*\n]+\*|\[[^\]\n]+\]\([^)\s]+\)|https?:\/\/[^\s<>"'`]+)/gu;
+
+function inlineMessageText(value: string): ReactNode[] {
   const nodes: ReactNode[] = [];
-  const pattern = /(`[^`]+`|\*\*[^*]+\*\*|https?:\/\/[^\s<>"'`]+)/giu;
   let cursor = 0;
-  for (const match of text.matchAll(pattern)) {
+  for (const match of value.matchAll(INLINE_PATTERN)) {
     const part = match[0];
     const index = match.index ?? cursor;
-    if (index > cursor) nodes.push(<span key={`text-${cursor}`}>{text.slice(cursor, index)}</span>);
-    if (part.startsWith('`') && part.endsWith('`')) {
+    if (index > cursor) nodes.push(<span key={`text-${cursor}`}>{value.slice(cursor, index)}</span>);
+    if (part.startsWith('`')) {
       nodes.push(<code key={`code-${index}`}>{part.slice(1, -1)}</code>);
-    } else if (part.startsWith('**') && part.endsWith('**')) {
+    } else if (part.startsWith('**') || part.startsWith('__')) {
       nodes.push(<strong key={`strong-${index}`}>{part.slice(2, -2)}</strong>);
+    } else if (part.startsWith('*')) {
+      nodes.push(<em key={`em-${index}`}>{part.slice(1, -1)}</em>);
+    } else if (part.startsWith('[')) {
+      const split = part.indexOf('](');
+      const label = part.slice(1, split);
+      const href = normalizeLink(part.slice(split + 2, -1));
+      nodes.push(href
+        ? <a href={href} target="_blank" rel="noreferrer" key={`link-${index}`}>{label}</a>
+        : <span key={`text-${index}`}>{part}</span>);
     } else {
       const href = normalizeLink(part);
       nodes.push(href
@@ -1900,24 +1920,172 @@ function inlineMessageText(text: string): ReactNode[] {
     }
     cursor = index + part.length;
   }
-  if (cursor < text.length) nodes.push(<span key={`text-${cursor}`}>{text.slice(cursor)}</span>);
-  return nodes.length ? nodes : [<span key="text-empty">{text}</span>];
+  if (cursor < value.length) nodes.push(<span key={`text-${cursor}`}>{value.slice(cursor)}</span>);
+  return nodes.length ? nodes : [<span key="text-empty">{value}</span>];
+}
+
+type MarkdownListItem = { depth: number; ordered: boolean; value?: number; text: string };
+type MarkdownBlock =
+  | { kind: 'code'; text: string }
+  | { kind: 'heading'; level: number; text: string }
+  | { kind: 'list'; items: MarkdownListItem[] }
+  | { kind: 'quote'; lines: string[] }
+  | { kind: 'rule' }
+  | { kind: 'paragraph'; lines: string[] };
+
+const MD_FENCE = /^\s{0,3}(?:```|~~~)/u;
+const MD_RULE = /^ {0,3}(?:-{3,}|\*{3,}|_{3,})\s*$/u;
+const MD_HEADING = /^ {0,3}(#{1,6})\s+(.*)$/u;
+const MD_QUOTE = /^ {0,3}>\s?(.*)$/u;
+const MD_BULLET = /^(\s*)[-*+•]\s+(.*)$/u;
+const MD_ORDERED = /^(\s*)(\d{1,3})[.)]\s+(.*)$/u;
+const MD_TASK = /^\[([ xX])\]\s+(.*)$/u;
+
+function startsBlock(line: string): boolean {
+  return MD_FENCE.test(line) || MD_HEADING.test(line) || MD_RULE.test(line) || MD_QUOTE.test(line)
+    || MD_BULLET.test(line) || MD_ORDERED.test(line);
+}
+
+/** Indent width in "levels": two spaces (or one tab) per nesting level, capped. */
+function listDepth(indent: string): number {
+  return Math.min(4, Math.floor(indent.replace(/\t/gu, '  ').length / 2));
+}
+
+function parseMarkdownBlocks(source: string): MarkdownBlock[] {
+  const lines = source.replace(/\r\n?/gu, '\n').split('\n');
+  const blocks: MarkdownBlock[] = [];
+  let index = 0;
+
+  while (index < lines.length) {
+    const line = lines[index]!;
+
+    if (MD_FENCE.test(line)) {
+      const body: string[] = [];
+      index += 1;
+      while (index < lines.length && !MD_FENCE.test(lines[index]!)) {
+        body.push(lines[index]!);
+        index += 1;
+      }
+      index += 1; // the closing fence, or the end of the text
+      blocks.push({ kind: 'code', text: body.join('\n') });
+      continue;
+    }
+
+    if (!line.trim()) { index += 1; continue; }
+
+    if (MD_RULE.test(line)) { blocks.push({ kind: 'rule' }); index += 1; continue; }
+
+    const heading = MD_HEADING.exec(line);
+    if (heading) {
+      blocks.push({ kind: 'heading', level: heading[1]!.length, text: heading[2]!.trim() });
+      index += 1;
+      continue;
+    }
+
+    if (MD_QUOTE.test(line)) {
+      const quoted: string[] = [];
+      while (index < lines.length) {
+        const match = MD_QUOTE.exec(lines[index]!);
+        if (!match) break;
+        quoted.push(match[1]!);
+        index += 1;
+      }
+      blocks.push({ kind: 'quote', lines: quoted });
+      continue;
+    }
+
+    if (MD_BULLET.test(line) || MD_ORDERED.test(line)) {
+      const items: MarkdownListItem[] = [];
+      while (index < lines.length) {
+        const current = lines[index]!;
+        if (!current.trim()) {
+          // A blank line only ends the list when no further item follows it.
+          const next = lines[index + 1];
+          if (next && (MD_BULLET.test(next) || MD_ORDERED.test(next))) { index += 1; continue; }
+          break;
+        }
+        const bullet = MD_BULLET.exec(current);
+        const ordered = bullet ? null : MD_ORDERED.exec(current);
+        if (bullet) {
+          items.push({ depth: listDepth(bullet[1]!), ordered: false, text: bullet[2]! });
+          index += 1;
+          continue;
+        }
+        if (ordered) {
+          items.push({ depth: listDepth(ordered[1]!), ordered: true, value: Number(ordered[2]), text: ordered[3]! });
+          index += 1;
+          continue;
+        }
+        if (startsBlock(current) || !items.length) break;
+        // A plain line under an item is that item's continuation.
+        items[items.length - 1]!.text += ` ${current.trim()}`;
+        index += 1;
+      }
+      blocks.push({ kind: 'list', items });
+      continue;
+    }
+
+    const paragraph: string[] = [];
+    while (index < lines.length) {
+      const current = lines[index]!;
+      if (!current.trim() || startsBlock(current)) break;
+      paragraph.push(current);
+      index += 1;
+    }
+    blocks.push({ kind: 'paragraph', lines: paragraph });
+  }
+
+  return blocks;
+}
+
+function ListItemBody({ text }: { text: string }) {
+  const task = MD_TASK.exec(text);
+  if (!task) return <>{inlineMessageText(text)}</>;
+  return <><span className={`message-task ${task[1]! === ' ' ? '' : 'message-task-done'}`} aria-hidden="true">{task[1]! === ' ' ? '☐' : '☑'}</span>{inlineMessageText(task[2]!)}</>;
+}
+
+function MarkdownList({ items, keyPrefix }: { items: MarkdownListItem[]; keyPrefix: string }) {
+  const base = items.reduce((least, item) => Math.min(least, item.depth), items[0]?.depth ?? 0);
+  const rows: { item: MarkdownListItem; children: MarkdownListItem[] }[] = [];
+  let index = 0;
+  while (index < items.length) {
+    const item = items[index]!;
+    index += 1;
+    const children: MarkdownListItem[] = [];
+    while (index < items.length && items[index]!.depth > base) {
+      children.push(items[index]!);
+      index += 1;
+    }
+    rows.push({ item, children });
+  }
+  const ordered = rows[0]?.item.ordered ?? false;
+  const start = ordered ? rows[0]?.item.value ?? 1 : undefined;
+  const children = rows.map((row, rowIndex) => <li key={`${keyPrefix}-${rowIndex}`} className={MD_TASK.test(row.item.text) ? 'message-task-item' : undefined}>
+    <ListItemBody text={row.item.text} />
+    {row.children.length > 0 && <MarkdownList items={row.children} keyPrefix={`${keyPrefix}-${rowIndex}`} />}
+  </li>);
+  return ordered
+    ? <ol start={start === 1 ? undefined : start}>{children}</ol>
+    : <ul>{children}</ul>;
 }
 
 function MessageText({ text }: { text: string }) {
-  const blocks = text.split(/\n{2,}/u).filter(Boolean);
+  const blocks = useMemo(() => parseMarkdownBlocks(text), [text]);
   return <div className="message-text">{blocks.map((block, index) => {
-    const lines = block.split('\n');
-    if (block.startsWith('```')) {
-      return <pre className="message-code" key={index}><code>{block.replace(/^```[^\n]*\n?/u, '').replace(/\n?```$/u, '')}</code></pre>;
+    switch (block.kind) {
+      case 'code':
+        return <pre className="message-code" key={index}><code>{block.text}</code></pre>;
+      case 'heading':
+        return <h3 className={`message-heading message-heading-${block.level}`} key={index}>{inlineMessageText(block.text)}</h3>;
+      case 'list':
+        return <MarkdownList items={block.items} keyPrefix={`list-${index}`} key={index} />;
+      case 'quote':
+        return <blockquote className="message-quote" key={index}>{block.lines.map((line, lineIndex) => <p key={lineIndex}>{inlineMessageText(line)}</p>)}</blockquote>;
+      case 'rule':
+        return <hr className="message-rule" key={index} />;
+      default:
+        return <p key={index}>{block.lines.map((line, lineIndex) => <span key={lineIndex}>{inlineMessageText(line)}{lineIndex < block.lines.length - 1 && <br />}</span>)}</p>;
     }
-    if (lines.length && /^#{1,3}\s+/u.test(lines[0])) {
-      return <div className="message-heading" key={index}><h3>{lines[0].replace(/^#{1,3}\s+/u, '')}</h3>{lines.slice(1).map((line, lineIndex) => <p key={lineIndex}>{inlineMessageText(line)}</p>)}</div>;
-    }
-    if (lines.length && lines.every((line) => /^[-*]\s+/u.test(line))) {
-      return <ul key={index}>{lines.map((line, lineIndex) => <li key={lineIndex}>{inlineMessageText(line.replace(/^[-*]\s+/u, ''))}</li>)}</ul>;
-    }
-    return <p key={index}>{lines.map((line, lineIndex) => <span key={lineIndex}>{line}{lineIndex < lines.length - 1 && <br />}</span>)}</p>;
   })}</div>;
 }
 

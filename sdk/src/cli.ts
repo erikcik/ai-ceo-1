@@ -2454,6 +2454,12 @@ async function _runCommand(args: Namespace): Promise<number> {
     // plugin with the highest priority is loaded for this agent.
     const override = args[_MCP_CONFIG_DESTS[name] ?? ""];
     if (override) return String(override);
+    // A supervised worker is handed a per-run MCP config that already composes
+    // the browser server with the run's granted capability servers; it is the
+    // single source of truth, so it wins over plugin auto-resolution here.
+    if (Boolean(args["supervised"]) && process.env.LH_HARNESS_CLAUDECODE_MCP_CONFIG) {
+      return String(process.env.LH_HARNESS_CLAUDECODE_MCP_CONFIG);
+    }
     if (!pluginMcpCache.has(name)) {
       const { activePluginForAgent } = await import("./plugins/state.js");
       const { PluginError } = await import("./plugins/errors.js");
@@ -2979,6 +2985,11 @@ async function _startCommand(args: Namespace): Promise<number> {
   }
   if (!args["docker"]) {
     await _ensureHostComputerUse();
+    try {
+      const { activePluginForAgent } = await import("./plugins/state.js");
+      const active = activePluginForAgent("claude_code");
+      if (active && active[1]) process.env.LH_HARNESS_CLAUDECODE_MCP_CONFIG = active[1];
+    } catch { /* no browser plugin: the per-run config simply omits it */ }
     const secrets = syncSecretsFile();
     for (const [key, value] of Object.entries(secrets)) if (!process.env[key]) process.env[key] = value;
     _reportCapabilities(process.env);
