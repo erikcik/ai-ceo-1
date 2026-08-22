@@ -544,3 +544,33 @@ test("the built web bundle is served at the root when present", async (t) => {
   assert.equal(page.status, 200);
   assert.ok(text.includes('<div id="root"></div>'));
 });
+
+test("POST /api/service/reload requires the capability and fires the callback", async () => {
+  const tmp = tmpDir();
+  const { root, state } = fixture(tmp);
+  const closedHandle = await serve({ state, runsRoot: root, runId: "run-1" });
+  const denied = await fetch(`${closedHandle.url}api/service/reload`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: "{}",
+  });
+  assert.equal(denied.status, 501);
+  assert.equal(((await denied.json()) as { detail: string }).detail, "reload is not enabled for this deployment");
+  const meta = (await (await fetch(`${closedHandle.url}api/meta`)).json()) as { capabilities: Record<string, boolean> };
+  assert.equal(meta.capabilities.reload, false);
+  await closedHandle.close();
+
+  let fired = 0;
+  const handle = await serve({ state, runsRoot: root, runId: "run-1", onReload: () => { fired += 1; } });
+  const metaOn = (await (await fetch(`${handle.url}api/meta`)).json()) as { capabilities: Record<string, boolean> };
+  assert.equal(metaOn.capabilities.reload, true);
+  const accepted = await fetch(`${handle.url}api/service/reload`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: "{}",
+  });
+  assert.equal(accepted.status, 200);
+  await new Promise((resolve) => setTimeout(resolve, 400));
+  assert.equal(fired, 1);
+  await handle.close();
+});

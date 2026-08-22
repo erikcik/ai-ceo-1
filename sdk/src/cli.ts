@@ -15,8 +15,9 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
-import { randomUUID } from "node:crypto";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import child_process from "node:child_process";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 
 import {
   PROJECT_CONFIG_PATH,
@@ -28,6 +29,7 @@ import {
   resolveRoleReasoningEffort,
 } from "./config.js";
 import {
+  DEFAULT_STATE_ROOT,
   DEFAULT_CLAUDE_MODEL,
   DEFAULT_MAX_ROUNDS,
   DEFAULT_WORKSPACE_PATH,
@@ -1429,6 +1431,24 @@ export function buildParser(runDefaults: Record<string, unknown>): {
 
   addCommand("check-update", "Check npm for a newer LongHorizon-Harness release");
 
+  const startParser = addCommand(
+    "start",
+    "Initialize this folder (if needed) and serve the workbench for it",
+  );
+  startParser.addArgument("--docker", {
+    action: "store_true",
+    help: "Run the whole stack in a sandboxed container; this folder is bind-mounted, so all state stays on the host and survives restarts.",
+  });
+  startParser.addArgument("--port", {
+    type: _port,
+    default: 8799,
+    help: "Workbench port on 127.0.0.1.",
+  });
+  startParser.addArgument("--no-open", {
+    action: "store_true",
+    help: "Do not open the workbench URL in a browser.",
+  });
+
   return { parser, pluginParser };
 }
 
@@ -1476,6 +1496,7 @@ async function _main(rawArgv: string[]): Promise<number> {
   }
   if (command === "init") return _initCommand(args);
   if (command === "check-update") return await _checkUpdateCommand();
+  if (command === "start") return await _startCommand(args);
 
   parser.printHelp();
   return 2;
@@ -1910,6 +1931,7 @@ type WebServerRunner = (options: {
   port?: number;
   workspaceRoot?: string | null;
   authToken?: string | null;
+  reloadable?: boolean;
 }) => Promise<number>;
 
 /** Import the Web server, keeping the cost off CLI-only invocations. */
@@ -1984,6 +2006,9 @@ async function _serveWebWorkbench(args: Namespace, runWebServer: WebServerRunner
       port,
       workspaceRoot: args["workspace_root"] as string,
       authToken,
+      // Set by `lh-harness start` (host wrapper) and by the container image:
+      // both know how to bring the service back after an exit-87 reload.
+      reloadable: process.env["LH_HARNESS_ENABLE_RELOAD"] === "1",
     });
     if (interrupted) print("Web API stopped.");
     return code;
@@ -2742,6 +2767,232 @@ function _indent(text: string, prefix = "  "): string {
 }
 
 /** Return effective Manager/Executor/Auditor bindings when overridden. */
+
+// ---------------------------------------------------------------------------
+// `lh-harness start` — one-command workflow for a project folder (addition
+// over upstream). Host mode wraps `web` in a relaunch loop so the Reload
+// button restarts the service on current source; --docker runs the whole
+// stack in a per-folder container whose only writable state is the
+// bind-mounted folder itself.
+// ---------------------------------------------------------------------------
+
+const _RELOAD_EXIT_CODE = 87;
+
+export function startContainerName(workspace: string): string {
+  const resolved = path.resolve(workspace);
+  const slug = (path.basename(resolved).toLowerCase().replace(/[^a-z0-9]+/gu, "-").replace(/^-+|-+$/gu, "") || "workspace").slice(0, 30);
+  const digest = createHash("sha256").update(resolved).digest("hex").slice(0, 6);
+  return `lh-harness-${slug}-${digest}`;
+}
+
+export function ensureWebToken(workspace: string): string {
+  const dir = path.join(workspace, ".lh-harness");
+  const target = path.join(dir, "web-token");
+  try {
+    const existing = pyStrip(fs.readFileSync(target, "utf-8"));
+    if (existing) return existing;
+  } catch {
+    /* absent: mint one below */
+  }
+  fs.mkdirSync(dir, { recursive: true });
+  const token = randomBytes(24).toString("hex");
+  fs.writeFileSync(target, `${token}\n`, { mode: 0o600 });
+  return token;
+}
+
+const _DOCKER_ENV_TEMPLATE = `# lh-harness sandbox credentials (user-scoped; read by every \`start --docker\`).
+# Fill in ONE auth method for the agents inside the container:
+#   CLAUDE_CODE_OAUTH_TOKEN — run \`claude setup-token\` where you are logged in
+#   or ANTHROPIC_API_KEY    — a console.anthropic.com key (per-token billing)
+CLAUDE_CODE_OAUTH_TOKEN=
+# ANTHROPIC_API_KEY=
+# Third-party provider keys (sdk/providers.json) go here too, e.g.:
+# ORCA_API_KEY=
+`;
+
+function ensureDockerEnvFile(): [string, boolean] {
+  const target = path.join(DEFAULT_STATE_ROOT, "docker.env");
+  let content = "";
+  try {
+    content = fs.readFileSync(target, "utf-8");
+  } catch {
+    fs.mkdirSync(DEFAULT_STATE_ROOT, { recursive: true });
+    fs.writeFileSync(target, _DOCKER_ENV_TEMPLATE, { mode: 0o600 });
+    content = _DOCKER_ENV_TEMPLATE;
+  }
+  // Horizontal whitespace only: `\s` would run across the newline and let the
+  // template's empty `TOKEN=` line match the next line's `#`.
+  const hasAuth = /^[ \t]*(CLAUDE_CODE_OAUTH_TOKEN|ANTHROPIC_API_KEY)[ \t]*=[ \t]*\S+/mu.test(content);
+  return [target, hasAuth];
+}
+
+function harnessPackageRoot(): string {
+  // src/cli.ts -> the sdk package directory; its parent holds docker/.
+  return path.dirname(path.dirname(fileURLToPath(new URL(import.meta.url))));
+}
+
+function _docker(argv: string[], options: { inherit?: boolean } = {}): { status: number; stdout: string } {
+  const result = child_process.spawnSync("docker", argv, {
+    encoding: "utf-8",
+    stdio: options.inherit ? ["ignore", "inherit", "inherit"] : ["ignore", "pipe", "pipe"],
+  });
+  if (result.error) throw result.error;
+  return { status: result.status ?? 1, stdout: result.stdout ?? "" };
+}
+
+async function _startCommand(args: Namespace): Promise<number> {
+  const workspace = process.cwd();
+  const port = Number(args["port"]);
+  const created = !_isFile(PROJECT_CONFIG_PATH);
+  if (created) {
+    createProjectConfig();
+    print(`Created config: ${path.resolve(PROJECT_CONFIG_PATH)}`);
+  } else {
+    print(`Using config: ${path.resolve(PROJECT_CONFIG_PATH)}`);
+  }
+  if (!args["docker"]) return await _startHost(workspace, port, Boolean(args["no_open"]));
+  return await _startDocker(workspace, port, Boolean(args["no_open"]));
+}
+
+/** Relaunch loop: a child `web` process per generation, so an exit-87 reload
+ * re-imports the harness source from disk. */
+async function _startHost(workspace: string, port: number, noOpen: boolean): Promise<number> {
+  const sdkRoot = path.dirname(harnessPackageRoot()) === workspace ? harnessPackageRoot() : harnessPackageRoot();
+  const cliPath = path.join(sdkRoot, "src", "cli.ts");
+  const loader = import.meta.resolve("tsx");
+  let generation = 0;
+  for (;;) {
+    generation += 1;
+    if (generation > 1) print("Reloading the harness on current source…");
+    const child = child_process.spawn(
+      process.execPath,
+      [
+        "--import",
+        loader,
+        cliPath,
+        "web",
+        "--workspace-root",
+        workspace,
+        "--runs-root",
+        path.join(workspace, ".lh-harness", "runs"),
+        "--port",
+        String(port),
+        ...(noOpen || generation > 1 ? ["--no-open"] : []),
+      ],
+      {
+        cwd: workspace,
+        stdio: "inherit",
+        env: { ...process.env, LH_HARNESS_ENABLE_RELOAD: "1" },
+      },
+    );
+    const code = await new Promise<number>((resolve) => {
+      child.on("exit", (value, signal) => resolve(signal ? 130 : (value ?? 1)));
+    });
+    if (code !== _RELOAD_EXIT_CODE) return code;
+  }
+}
+
+async function _startDocker(workspace: string, port: number, noOpen: boolean): Promise<number> {
+  const packageRoot = harnessPackageRoot();
+  const harnessRoot = path.dirname(packageRoot);
+  try {
+    if (_docker(["version", "--format", "{{.Server.Version}}"]).status !== 0) {
+      eprint("Docker is installed but the daemon is not responding. Start Docker Desktop and retry.");
+      return 2;
+    }
+  } catch {
+    eprint("Docker is not installed (or not on PATH). Install Docker Desktop, or run `lh-harness start` without --docker.");
+    return 2;
+  }
+  const [envFile, hasAuth] = ensureDockerEnvFile();
+  if (!hasAuth) {
+    eprint(`No agent credentials configured for the sandbox.`);
+    eprint(`Put CLAUDE_CODE_OAUTH_TOKEN (from \`claude setup-token\`) or ANTHROPIC_API_KEY into ${envFile}, then rerun.`);
+    return 2;
+  }
+  const dist = path.join(packageRoot, "frontend", "web", "dist", "index.html");
+  if (!_isFile(dist)) {
+    eprint(`The workbench bundle is missing (${dist}). Run \`npm run build:web\` in ${packageRoot} first.`);
+    return 2;
+  }
+  print("Building the sandbox image (cached after the first build)…");
+  if (_docker(["build", "-f", path.join(harnessRoot, "docker", "Dockerfile"), "-t", "lh-harness:latest", harnessRoot], { inherit: true }).status !== 0) {
+    eprint("Image build failed; see the output above.");
+    return 2;
+  }
+  const token = ensureWebToken(workspace);
+  const name = startContainerName(workspace);
+  const inspect = _docker(["inspect", "--format", "{{.State.Status}} {{range $p, $b := .NetworkSettings.Ports}}{{range $b}}{{.HostPort}}{{end}}{{end}}", name]);
+  if (inspect.status === 0) {
+    const [, boundPort] = pyStrip(inspect.stdout).split(/\s+/u);
+    if (boundPort && boundPort !== String(port)) {
+      print(`Recreating ${name}: it was bound to port ${boundPort}, requested ${port}.`);
+      _docker(["rm", "-f", name]);
+    } else {
+      // Restart (not just start): the harness source is bind-mounted, so a
+      // restart is also how an already-running sandbox picks up new code.
+      print(`Reusing sandbox ${name} (state is on this folder; nothing is lost).`);
+      if (_docker(["restart", name]).status !== 0) {
+        eprint(`Could not restart ${name}; see \`docker logs ${name}\`.`);
+        return 2;
+      }
+      return await _startDockerReady(name, port, token, noOpen);
+    }
+  }
+  const mounts = [
+    ["-v", `${workspace}:/work`],
+    // The harness engineering itself, read-only over the image's copy: the
+    // sandbox always runs the source currently in the harness repo, and the
+    // Reload button (container restart) picks up edits without a rebuild.
+    ["-v", `${path.join(packageRoot, "src")}:/app/sdk/src:ro`],
+    ["-v", `${path.join(packageRoot, "bin")}:/app/sdk/bin:ro`],
+    ["-v", `${path.join(packageRoot, "providers.json")}:/app/sdk/providers.json:ro`],
+    ["-v", `${path.join(packageRoot, "frontend", "web", "dist")}:/app/sdk/frontend/web/dist:ro`],
+  ].flat();
+  const run = _docker([
+    "run",
+    "-d",
+    "--name",
+    name,
+    "--restart",
+    "unless-stopped",
+    "-p",
+    `127.0.0.1:${port}:8799`,
+    ...mounts,
+    "--env-file",
+    envFile,
+    "-e",
+    `LH_HARNESS_WEB_TOKEN=${token}`,
+    "-e",
+    "LH_HARNESS_ENABLE_RELOAD=1",
+    "lh-harness:latest",
+    "web",
+  ]);
+  if (run.status !== 0) {
+    eprint(`Could not start the sandbox container; see \`docker logs ${name}\` (or the output above).`);
+    return 2;
+  }
+  return await _startDockerReady(name, port, token, noOpen);
+}
+
+async function _startDockerReady(name: string, port: number, token: string, noOpen: boolean): Promise<number> {
+  const url = `http://127.0.0.1:${port}/`;
+  const { waitForDashboardReady, openBrowserWhenReady } = await import("./webapi/server.js");
+  const ready = await waitForDashboardReady(url, { timeout: 30 });
+  print("");
+  print(`Sandbox:   ${name} (restart policy: unless-stopped — survives Docker restarts)`);
+  print(`Workbench: ${url}`);
+  print(`Token:     ${token}`);
+  print(`           (paste it into the key dialog, bottom-left; stored in .lh-harness/web-token)`);
+  print(`Stop:      docker stop ${name}    Logs: docker logs -f ${name}`);
+  if (!ready) {
+    eprint(`The workbench did not answer within 30s; check \`docker logs ${name}\`.`);
+    return 1;
+  }
+  if (!noOpen) void openBrowserWhenReady(url);
+  return 0;
+}
+
 export function publicRoleConfigsFromArgs(
   args: Namespace,
 ): Record<string, Record<string, string>> | null {

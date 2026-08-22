@@ -50,6 +50,9 @@ RUN npm install -g @playwright/mcp@0.0.79 \
 # no per-project plugin install is needed inside the container.
 RUN mkdir -p /app/mcp && printf '%s' '{"mcpServers":{"playwright":{"command":"playwright-mcp","args":["--headless","--isolated","--no-sandbox","--executable-path","/usr/bin/chromium","--output-dir","/tmp/playwright-mcp-output"]}}}' > /app/mcp/playwright.mcp.json
 ENV LH_HARNESS_CLAUDECODE_MCP_CONFIG=/app/mcp/playwright.mcp.json
+# The container is brought back by its restart policy after an exit, so the
+# workbench's Reload button (exit 87 on current source) is safe to enable.
+ENV LH_HARNESS_ENABLE_RELOAD=1
 
 WORKDIR /app
 COPY sdk/package.json sdk/package-lock.json ./sdk/

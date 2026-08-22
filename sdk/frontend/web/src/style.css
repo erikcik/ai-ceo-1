@@ -628,3 +628,6 @@ button:disabled { cursor: not-allowed; opacity: .45; }
 .composer-footer button.composer-attach { display: inline-flex; align-items: center; gap: 5px; color: var(--ink); background: var(--paper); border: 1px solid var(--line-strong); }
 .composer-footer button.composer-attach:hover { background: var(--faint); opacity: 1; }
 .composer-footer button.composer-attach:disabled { color: var(--mute-soft); border-color: var(--line); background: var(--paper); }
+.reload-spin { animation: lh-reload-spin 1s linear infinite; }
+@keyframes lh-reload-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .reload-spin { animation: none; } }

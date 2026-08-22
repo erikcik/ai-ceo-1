@@ -38,13 +38,14 @@ import {
   XCircle,
   ZoomIn,
   ZoomOut,
-  type LucideIcon, Paperclip } from 'lucide-react';
+  type LucideIcon, Paperclip, RotateCw } from 'lucide-react';
 import { MAX_ROUNDS, type ArtifactList, type EventEnvelope, type RunSummary, type Snapshot } from '../../core/src/types';
 import { availableCommands, isTrajectoryNoise, managerPlanSummary, managerPlanText, normaliseMaxRounds, projectArtifactView, projectStatus, dedupeEvents, parseCommand, parseNewRunArgs, phaseLabel, projectTrajectoryView, reducePanelState, sortTranscript, DEFAULT_PANEL_STATE, type ArtifactProjection, type FileChangeItem, type PanelName, type StatusView, type TrajectoryItem, type ValidationResultSummary } from '../../core/src';
 import {
   abortRun,
   createRun,
   uploadFile,
+  reloadService,
   fetchArtifact,
   fetchArtifacts,
   fetchMeta,
@@ -752,6 +753,28 @@ export default function App() {
   const [dismissedFeedError, setDismissedFeedError] = useState('');
   const [instruction, setInstruction] = useState('');
   const [composerUploading, setComposerUploading] = useState(false);
+  const [reloading, setReloading] = useState(false);
+  async function reloadHarness() {
+    if (reloading) return;
+    setReloading(true);
+    try {
+      await reloadService();
+      // The listener goes away and comes back on fresh source; wait for it.
+      const deadline = Date.now() + 90_000;
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+      while (Date.now() < deadline) {
+        try {
+          const probe = await fetch('/api/meta', { headers: {} });
+          if (probe.status > 0) break;
+        } catch { /* still restarting */ }
+        await new Promise((resolve) => setTimeout(resolve, 750));
+      }
+      window.location.reload();
+    } catch (reason) {
+      setError(compactText(String(reason instanceof Error ? reason.message : reason), 240));
+      setReloading(false);
+    }
+  }
   const composerFileInput = useRef<HTMLInputElement | null>(null);
   async function attachToInstruction(list: FileList | null) {
     if (!list?.length) return;
@@ -1366,7 +1389,7 @@ export default function App() {
           {filteredRuns.map((run) => <button key={run.id} className={`session-item ${run.id === runId ? 'selected' : ''}`} onClick={() => setRunId(run.id)}><span className={statusClass(run.status)} /><span className="session-copy"><strong>{run.task || 'Untitled task'}</strong><small>{run.id}</small></span></button>)}
           {!filteredRuns.length && <div className="sidebar-empty">{text('No tasks yet')}</div>}
         </div>
-        <div className="sidebar-footer"><span className={`connection-dot connection-${runId ? connection : 'idle'}`} />{!runId ? text('Idle') : connection === 'connected' ? text('Connected') : connection === 'loading' ? text('Connecting') : connection === 'reconnecting' ? text('Reconnecting') : connection === 'closed' ? text('Disconnected') : text('Connection error')}<span>·</span> {text('Local workspace')}<button type="button" className="connection-settings" onClick={() => setAuthOpen(true)} title={text('Connection settings')} aria-label={text('Connection settings')}><KeyRound size={13} /></button></div>
+        <div className="sidebar-footer"><span className={`connection-dot connection-${runId ? connection : 'idle'}`} />{!runId ? text('Idle') : connection === 'connected' ? text('Connected') : connection === 'loading' ? text('Connecting') : connection === 'reconnecting' ? text('Reconnecting') : connection === 'closed' ? text('Disconnected') : text('Connection error')}<span>·</span> {text('Local workspace')}<button type="button" className="connection-settings" onClick={() => setAuthOpen(true)} title={text('Connection settings')} aria-label={text('Connection settings')}><KeyRound size={13} /></button>{meta?.capabilities?.reload && <button type="button" className="connection-settings" disabled={reloading} onClick={() => void reloadHarness()} title={text('Reload the harness (restart on current source)')} aria-label={text('Reload the harness')}><RotateCw size={13} className={reloading ? 'reload-spin' : ''} /></button>}</div>
       </aside>
 
       <main className="codex-main">

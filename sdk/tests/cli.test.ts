@@ -15,6 +15,8 @@ import { after, test } from "node:test";
 
 import {
   adoptSupervisedRunDir,
+  ensureWebToken,
+  startContainerName,
   applyRepeatableDefaults,
   buildParser,
   claimSupervisedOwner,
@@ -985,4 +987,18 @@ test("a supervised worker's role configuration matches the reservation regardles
       }),
     /role configuration does not match/u,
   );
+});
+
+test("start helpers: per-folder container names and a persistent web token", () => {
+  const nameA = startContainerName("/Users/someone/Desktop/My Project!");
+  assert.match(nameA, /^lh-harness-my-project-[0-9a-f]{6}$/u);
+  assert.equal(nameA, startContainerName("/Users/someone/Desktop/My Project!"));
+  assert.notEqual(nameA, startContainerName("/Users/someone/Desktop/other"));
+
+  const base = tmpRoot();
+  const token = ensureWebToken(base);
+  assert.match(token, /^[0-9a-f]{48}$/u);
+  assert.equal(ensureWebToken(base), token, "the token must persist across starts");
+  const mode = fs.statSync(path.join(base, ".lh-harness", "web-token")).mode & 0o777;
+  assert.equal(mode, 0o600);
 });

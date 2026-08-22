@@ -473,3 +473,9 @@ export async function uploadFile(file: File, workspace?: string): Promise<Upload
   const payload = await response.json() as { file: UploadedFile };
   return payload.file;
 }
+
+/** Ask the service to restart on current harness source (capability `reload`). */
+export async function reloadService(): Promise<void> {
+  const response = await fetch('/api/service/reload', { method: 'POST', headers: { ...authHeaders(), 'Content-Type': 'application/json' }, body: '{}' });
+  if (!response.ok) throw await responseError(response);
+}

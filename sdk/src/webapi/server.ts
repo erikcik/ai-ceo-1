@@ -903,6 +903,13 @@ export type CreateAppOptions = {
   bindHost?: string;
   staticDir?: string | null;
   task?: string;
+  /**
+   * Addition over upstream: when set, the deployment supports an operator-
+   * triggered restart. `POST /api/service/reload` acknowledges, then invokes
+   * this callback; the process wrapper (or the container restart policy)
+   * brings the service back up on the current harness source.
+   */
+  onReload?: (() => void) | null;
 };
 
 export type WebApp = {
@@ -970,6 +977,7 @@ export function createApp(options: CreateAppOptions = {}): WebApp {
         approvals: liveControl,
         injections: liveControl,
         run_control: supervisor !== null,
+        reload: Boolean(options.onReload),
         create_run: supervisor !== null && !Boolean(supervisor.attachedOnly),
         resume: supervisor !== null && !Boolean(supervisor.attachedOnly),
         stop: supervisor !== null,
@@ -1518,6 +1526,14 @@ export function createApp(options: CreateAppOptions = {}): WebApp {
         sendJson(res, 200, await metaResponse(req, true));
         return;
       }
+      // POST /api/service/reload — restart the service on current source.
+      if (method === "POST" && segments.length === 3 && segments[1] === "service" && segments[2] === "reload") {
+        if (!options.onReload) throw new HttpError(501, "reload is not enabled for this deployment");
+        sendJson(res, 200, { ok: true, detail: "restarting" });
+        // Let the response flush before the listener goes away.
+        setTimeout(() => options.onReload?.(), 250);
+        return;
+      }
       // GET /api/uploads (POST is handled before the JSON middleware)
       if (method === "GET" && segments.length === 2 && segments[1] === "uploads") {
         listUploads(res, params);
@@ -1931,6 +1947,8 @@ export async function runWebServer(options: {
   authToken?: string | null;
   allowedOrigins?: Iterable<string> | null;
   supervisor?: RunSupervisor | null;
+  /** See `CreateAppOptions.onReload`; when reload fires, resolve with exit code 87. */
+  reloadable?: boolean;
 }): Promise<number> {
   const host = options.host ?? "127.0.0.1";
   const port = options.port ?? 8799;
@@ -1948,6 +1966,8 @@ export async function runWebServer(options: {
   const supervisor =
     options.supervisor ??
     (effectiveRoot ? new RunSupervisor(effectiveRoot, { workspaceRoot: options.workspaceRoot ?? process.cwd() }) : null);
+  let exitCode = 0;
+  let requestReload: (() => void) | null = null;
   const handle = await startWebServer({
     logDir: options.logDir ?? null,
     runsRoot: effectiveRoot,
@@ -1958,6 +1978,7 @@ export async function runWebServer(options: {
     allowedOrigins: options.allowedOrigins ?? null,
     host,
     port,
+    onReload: options.reloadable ? () => requestReload?.() : null,
   });
   await new Promise<void>((resolve) => {
     const stop = (): void => {
@@ -1966,10 +1987,16 @@ export async function runWebServer(options: {
         .then(() => (supervisor && !options.supervisor ? supervisor.shutdown() : undefined))
         .then(resolve);
     };
+    requestReload = (): void => {
+      // 87 tells the `start` wrapper (or the container restart policy, which
+      // restarts on any exit) to bring the service back on current source.
+      exitCode = 87;
+      stop();
+    };
     process.once("SIGINT", stop);
     process.once("SIGTERM", stop);
   });
-  return 0;
+  return exitCode;
 }
 
 // ---------------------------------------------------------------------------

@@ -1,145 +1,133 @@
-# ai-ceo — LongHorizon-Harness on the Claude Agent SDK
+# lh-harness
 
-### Loop Engineering for long-horizon agents
+A long-horizon agent harness: give it a goal once and it works in rounds —
+**Manager** plans one bounded step, an **Executor** does it with fresh context,
+a read-only **Auditor** verifies the result in the real workspace, and only
+verified progress becomes trusted state, until the task is honestly done. A
+TypeScript port of [LongHorizon-Harness](https://github.com/AMAP-ML/LongHorizon-Harness)
+(arXiv 2608.01964) running on the Claude Agent SDK. This document is the
+deployment guide; the loop's design belongs to the paper and the module map to
+[sdk/README.md](sdk/README.md).
 
-**Give the harness a goal once. It keeps working — plan → act → verify →
-checkpoint or recover → repeat — until the work is actually done.**
+## Prerequisites
 
-This repository is a 1:1 TypeScript port of
-[LongHorizon-Harness](https://github.com/AMAP-ML/LongHorizon-Harness)
-(AMAP-ML, arXiv 2608.01964) with the Claude Agent SDK as its execution
-backend. The loop, the roles, the file formats, the dashboard, the CLI and the
-configuration are the upstream design; only the place that launches an agent
-episode changed from `claude --print` to `query()` from
-`@anthropic-ai/claude-agent-sdk`.
+| | Needed for |
+|---|---|
+| Node.js ≥ 22 and npm | running the harness |
+| the `claude` CLI, logged in (`npm i -g @anthropic-ai/claude-code`) | executing agent episodes on the host |
+| Docker Desktop (only for `--docker`) | the sandboxed deployment |
+| an Anthropic OAuth token or API key (only for `--docker`) | agent auth inside the container |
 
-> The model determines what an agent can do in one round. The harness
-> engineers the loop around it: what to do next, how to verify the result in
-> the real environment, what progress to preserve, and how to continue after
-> failure or context refresh.
-
-## The loop
-
-```mermaid
-flowchart LR
-    S["Original goal +<br/>verified state"] --> P["Manager: plan the next<br/>bounded step"]
-    P --> A["Executor: act in the CLI<br/>(or GUI) with fresh context"]
-    A --> V["Auditor: verify files, logs,<br/>tests in the real workspace"]
-    V -->|Pass| C["Checkpoint<br/>verified progress"]
-    V -->|Fail| R["Record evidence<br/>and recover"]
-    C --> D{"Task complete?"}
-    R --> S
-    D -->|No| S
-    D -->|Yes| F["Verified result +<br/>plain-language reply"]
-```
-
-| Loop responsibility | Role | What it owns |
-|---|---|---|
-| 🧭 State and next step | **Manager** | Rebuilds each round from the original goal, the stable task contract, verified progress, failure evidence and remaining work; emits exactly one route: `Next: gui / cli / ask / done / blocked` |
-| ⚡ Action | **Executor** (GUI or CLI) | Starts with a fresh context and completes one clearly defined step |
-| 🔍 Ground truth | **Auditor** (GUI or CLI, read-only) | Independently inspects files, logs and tests; its first three lines are `Status:` / `Integrity:` / `Contract audit:` |
-| 💬 Reply | **Final response** | Writes the plain-language answer from the verified state alone |
-
-Only results that pass independent verification become trusted task state. A
-rejected result remains evidence, not progress. `Next: done` without a
-`complete / clean / aligned` audit is rewritten to `invalid` and fed back as
-harness feedback.
-
-## Install
-
-Requirements: Node.js ≥ 22, the `claude` CLI on `PATH` (the SDK spawns it),
-and an Anthropic login or `ANTHROPIC_API_KEY` (or a third-party provider key,
-see below).
+## Install once
 
 ```bash
-cd sdk && npm install && npm run build:web      # harness + React workbench
-npm link                                         # puts `lh-harness` on PATH (optional)
-lh-harness doctor
+git clone <this repo> && cd <repo>/sdk
+npm install
+npm run build:web        # builds the React workbench bundle
+npm link                 # puts `lh-harness` on PATH
+lh-harness doctor        # environment report; fix anything marked FAIL
 ```
 
-Without `npm link`: `node sdk/bin/lh-harness.mjs <command>`.
+## Daily use
 
-## Use
+Make a folder per project. Everything the agents read, build, and record lives
+in that folder — the harness never writes outside it.
 
 ```bash
-cd /path/to/your/project
-lh-harness init                         # writes ./.lh-harness/config.toml
-lh-harness web --workspace-root .       # workbench at http://127.0.0.1:8799/
+mkdir ~/Desktop/my-project && cd ~/Desktop/my-project
+lh-harness start
 ```
 
-Or from the command line:
+`start` creates `./.lh-harness/config.toml` on first use, serves the workbench
+at `http://127.0.0.1:8799/`, and opens it. In the browser: **Start task** →
+describe the goal → **Attach files** (they are stored under `./inbox/` and
+referenced in the task) → pick a model per role → run. Mid-run you can answer
+approvals, inject instructions, stop, and continue; after a run finishes, a
+follow-up message continues the same run.
+
+Everything is plain files in your folder: deliverables at the top level,
+attachments in `inbox/`, and the complete record of every run in
+`.lh-harness/runs/<run-id>/` (`report.json`, `events.jsonl`, per-round plans,
+outputs and audits). The UI is only a window onto those files.
+
+### Sandboxed: `lh-harness start --docker`
+
+Same workflow, but the entire stack — workbench, supervisor, workers, and a
+headless Chromium the agents can browse with — runs inside a per-folder Docker
+container. The container sees **only** your project folder (mounted at
+`/work`); the host's Claude configuration, credentials and the rest of the
+filesystem do not exist inside it. That is the security model: the container
+is the agent sandbox, your folder is the only shared surface.
 
 ```bash
-lh-harness run --task @task.md --model claude-opus-5 --max-rounds 20
+cd ~/Desktop/my-project
+lh-harness start --docker
 ```
 
-The agents work in the directory you launched from. Every run is stored under
-`./.lh-harness/runs/<run-id>/`; the full report, including the final reply,
-is `lh_harness/report.json`; the event stream is
-`lh_harness/role_orchestration/events.jsonl`; every round's plan, executor
-output, audit report and feedback sit in `rounds/round_NNN/`.
+First-time setup, printed by the command itself when missing: put one agent
+credential into `~/.lh-harness/docker.env`
+(`CLAUDE_CODE_OAUTH_TOKEN=` from `claude setup-token`, or
+`ANTHROPIC_API_KEY=`). Third-party provider keys (see `sdk/providers.json`)
+go in the same file.
 
-Mid-run, from the workbench: answer an approval, send an instruction (claimed by
-the very next round), stop, continue, or keep the conversation going after the
-run finished — the follow-up continues the same round ledger.
+What `start --docker` guarantees:
 
-### Configuration
+- **State is yours and survives anything.** All runs, uploads and deliverables
+  are on your Mac in the project folder. Stop the container, restart Docker,
+  reboot — rerun `lh-harness start --docker` in the folder and the workbench
+  shows the same history; interrupted runs offer *Continue*. The container
+  itself holds nothing worth keeping.
+- **It comes back on its own.** The container restarts `unless-stopped`, so a
+  Docker engine restart re-serves the workbench without your involvement.
+- **Access is tokened.** A per-folder bearer token is generated into
+  `.lh-harness/web-token` and printed; paste it into the key dialog
+  (bottom-left) once per browser. The port binds to `127.0.0.1` only.
+- **It always runs the current harness.** The harness source is mounted
+  read-only into the container, so edits to this repo apply on the next
+  restart — no image rebuild (rebuilds happen automatically on `start` and
+  matter only when dependencies change).
 
-`lh-harness run` reads `./.lh-harness/config.toml`. Precedence: CLI flags >
-config.toml > built-in defaults. `[run]` holds `agent`, `model`,
-`reasoning_effort`, `max_rounds`, `dashboard`, `prompt_language`, guard
-excludes…; `[run.roles.<role>]` overrides agent/model/effort per role along the
-chain `gui_executor → executor → [run]`, `cli_auditor → auditor → [run]`,
-`final_response → manager`; `[run.timeouts]` sets per-episode seconds
-(manager 300, executors 1800, auditor 300). Every field has a CLI flag.
+One container per folder (`docker ps` shows it as `lh-harness-<folder>-<id>`);
+run several projects side by side with `--port`.
 
-### Any model
+### Reloading after harness changes
 
-The one agent backend is the Claude Agent SDK (`claude_code`). Models are any
-Anthropic model id, or `<provider>:<model>` for an OpenAI-compatible /
-Anthropic-compatible third-party endpoint declared in
-[`sdk/providers.json`](sdk/providers.json) (base URL + the *name* of the env var
-holding the key; keys never live in the repo). Pick a different model per role:
+The workbench's **reload button** (circular arrow, bottom-left) restarts the
+service on the current source of this repo: on the host the `start` wrapper
+respawns the server; in Docker the container restarts. Runs are separate
+worker processes — a reload does not touch them, and new workers always launch
+from current source anyway.
+
+### CLI instead of the UI
 
 ```bash
-ORCA_API_KEY=... lh-harness run --task @task.md \
-  --manager-model claude-opus-5 --executor-model orca:obsidian/Qwen3.8-27B
+lh-harness run --task @task.md --max-rounds 20 \
+  --manager-model claude-opus-5 --executor-model claude-sonnet-5
+lh-harness web / dashboard / doctor / init / plugin / check-update   # see --help
 ```
 
-### Docker
+`docker/` also carries a plain docker-compose deployment of the same image
+([docker/README.md](docker/README.md)) if you prefer compose over
+`start --docker`.
 
-`docker/` builds an image that runs the workbench and headless runs isolated
-from the host's Claude configuration and network filters — see
-[docker/README.md](docker/README.md).
+### Worth setting per project
 
-## Repository map
+In `.lh-harness/config.toml`: `[run.timeouts] auditor = 900` for tasks whose
+verification builds code, and `guard_exclude_paths = ["node_modules", ".next"]`
+so build churn is not mistaken for auditor tampering. Every field has a
+matching CLI flag; CLI > config > defaults.
 
-```
-sdk/src/               the harness (mirrors upstream src/lh_harness/ module by module)
-  manager.ts           the round loop, ledgers, report.json, human gates
-  role_prompts.ts      the manager / executor / auditor / final-response prompts, verbatim
-  auditor_agent.ts     audit-report parsing, completion guards, workspace-mutation guard
-  adapters/            Claude Code adapter on the Agent SDK + role permission policies
-  supervisor/          run supervisor, file-based control bus, lifecycle
-  dashboard/           state projection and human-gate rules
-  webapi/              HTTP + WebSocket control API serving the workbench
-  cli.ts               init · run · web · dashboard · doctor · plugin · check-update
-sdk/frontend/          the React workbench (core view models + web app)
-sdk/tests/             node:test ports of the upstream test-suite
-docker/                containerised deployment
-```
+### GUI / browser tasks
 
-## Citation
+Inside `--docker`, web-GUI subtasks work out of the box (Playwright MCP +
+headless Chromium are baked into the image; executors and auditors can
+navigate, click, type and screenshot). On the host, install a computer-use
+plugin instead: `lh-harness plugin install playwright-mcp` (web) or
+`open-computer-use` / `clawdcursor` (native desktop).
 
-The design, prompts and loop engineering are the work of the LongHorizon-Harness
-authors:
+## License / provenance
 
-```bibtex
-@article{longhorizonharness2026,
-  title={LongHorizon-Harness: Advancing Long-Horizon Agents for Real-World Tasks},
-  author={Ziyu Ma and Hailang Huang and Shun Zou and Yong Wang and Shidong Yang and Yiming Hu and Fei Wei and XiangXiang Chu},
-  journal={arXiv preprint arXiv:2608.01964},
-  year={2026},
-  url={https://arxiv.org/abs/2608.01964}
-}
-```
+The harness design, prompts and protocols are the work of the
+LongHorizon-Harness authors (MIT, arXiv 2608.01964); this repository is a
+TypeScript port on the Claude Agent SDK with additions noted in
+[sdk/README.md](sdk/README.md).
