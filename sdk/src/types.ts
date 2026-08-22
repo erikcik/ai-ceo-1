@@ -178,10 +178,10 @@ export type HarnessConfig = {
 export function harnessConfig(partial: Partial<HarnessConfig> = {}): HarnessConfig {
   return {
     max_total_episodes: partial.max_total_episodes ?? 4,
-    manager_budget: partial.manager_budget ?? new EpisodeBudget(300),
+    manager_budget: partial.manager_budget ?? new EpisodeBudget(900),
     gui_executor_budget: partial.gui_executor_budget ?? new EpisodeBudget(),
     cli_executor_budget: partial.cli_executor_budget ?? new EpisodeBudget(),
-    auditor_budget: partial.auditor_budget ?? new EpisodeBudget(300),
+    auditor_budget: partial.auditor_budget ?? new EpisodeBudget(900),
     workspace_path: partial.workspace_path ?? DEFAULT_WORKSPACE_PATH,
     harness_dir: partial.harness_dir ?? DEFAULT_HARNESS_DIR,
     log_dir: partial.log_dir ?? DEFAULT_LOG_DIR,

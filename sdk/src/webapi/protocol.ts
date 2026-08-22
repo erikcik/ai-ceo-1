@@ -23,6 +23,7 @@ export type BuildMetaOptions = {
   models?: Record<string, Record<string, unknown>[]> | null;
   defaults?: Record<string, unknown> | null;
   model_discovery?: Record<string, Record<string, unknown>> | null;
+  external_tools?: Record<string, unknown>[] | null;
 };
 
 /** Return the stable handshake payload used by both clients. */
@@ -52,6 +53,9 @@ export function buildMeta(options: BuildMetaOptions): Record<string, unknown> {
   }
   if (options.model_discovery !== undefined && options.model_discovery !== null) {
     result.model_discovery = options.model_discovery;
+  }
+  if (options.external_tools !== undefined && options.external_tools !== null) {
+    result.external_tools = options.external_tools;
   }
   return result;
 }

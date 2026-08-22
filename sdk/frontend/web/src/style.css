@@ -72,7 +72,12 @@ button:disabled { cursor: not-allowed; opacity: .45; }
 .session-copy strong { overflow: hidden; font-size: 12px; font-weight: 450; line-height: 1.35; text-overflow: ellipsis; white-space: nowrap; }
 .session-copy small { overflow: hidden; color: var(--mute); font: 9px var(--mono); text-overflow: ellipsis; white-space: nowrap; }
 .sidebar-empty { padding: 20px 9px; color: var(--mute); font-size: 12px; }
-.sidebar-footer { display: flex; align-items: center; gap: 7px; margin-top: auto; padding: 15px 10px 2px; color: var(--mute); font: 400 10px var(--mono); }
+.sidebar-footer { display: flex; align-items: center; justify-content: space-between; gap: 5px; margin-top: auto; padding: 15px 6px 2px; color: var(--mute); font: 400 10px/1.45 var(--mono); }
+.connection-state { display: flex; align-items: center; gap: 5px; min-width: 0; }
+.connection-copy { min-width: 0; overflow-wrap: anywhere; }
+.connection-phase { white-space: nowrap; }
+.connection-sep { padding: 0 2px; color: var(--mute-soft); }
+.connection-actions { display: flex; align-items: center; gap: 4px; flex: 0 0 auto; }
 
 /* status + connection dots: ink = done, accent = alive or needs a human,
    hollow gray = idle/unknown. */
@@ -82,12 +87,12 @@ button:disabled { cursor: not-allowed; opacity: .45; }
 .status-completed, .status-complete { background: var(--ink); }
 .status-waiting-approval { background: var(--accent); }
 .status-failed, .status-cancelled { background: var(--accent-deep); }
-.connection-dot { width: 5px; height: 5px; border-radius: 50%; background: var(--mute-soft); }
+.connection-dot { flex: 0 0 auto; width: 5px; height: 5px; border-radius: 50%; background: var(--mute-soft); }
 .connection-connected { background: var(--ink); }
 .connection-loading, .connection-reconnecting { background: var(--accent); }
 .connection-error { background: var(--accent-deep); }
 .connection-closed, .connection-idle { background: var(--mute-soft); }
-.codex-workbench .connection-settings { display: inline-grid; place-items: center; width: 22px; height: 22px; margin-left: auto; padding: 0; border: 1px solid var(--line); border-radius: 6px; color: var(--mute); background: var(--paper); }
+.codex-workbench .connection-settings { display: inline-grid; place-items: center; flex: 0 0 auto; width: 20px; height: 20px; padding: 0; border: 1px solid var(--line); border-radius: 6px; color: var(--mute); background: var(--paper); }
 .codex-workbench .connection-settings:hover { color: var(--ink); border-color: var(--line-strong); background: var(--faint); }
 
 /* ---- header --------------------------------------------------------------- */
@@ -631,3 +636,12 @@ button:disabled { cursor: not-allowed; opacity: .45; }
 .reload-spin { animation: lh-reload-spin 1s linear infinite; }
 @keyframes lh-reload-spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .reload-spin { animation: none; } }
+.tools-field { gap: 8px; }
+.tools-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.tool-item { padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--paper); }
+.tool-item.tool-on { border-color: var(--accent); background: var(--tint); }
+.tool-toggle { display: flex; align-items: center; gap: 9px; cursor: pointer; font: 500 13px var(--sans); color: var(--ink); }
+.tool-toggle input { width: 15px; height: 15px; accent-color: var(--accent); }
+.tool-name { font-weight: 500; }
+.tool-summary { margin: 5px 0 0 24px; color: var(--mute); font-size: 11.5px; line-height: 1.45; }
+.tool-blocked { margin: 4px 0 0 24px; color: var(--accent-deep); font-size: 11px; }

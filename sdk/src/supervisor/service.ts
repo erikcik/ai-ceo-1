@@ -42,6 +42,7 @@ import {
   resumeEpoch,
 } from "./lifecycle.js";
 import { normaliseReasoningEffort, supportsReasoningEffort } from "../agent_registry.js";
+import { gateWorkerEnv, resolveCapabilities, writeRunMcpConfig } from "../capabilities.js";
 import { DEFAULT_CLAUDE_MODEL, DEFAULT_MAX_ROUNDS, MAX_ROUNDS } from "../types.js";
 import {
   resolveNonStrict,
@@ -700,6 +701,7 @@ export interface CreateRunOptions {
   reasoning_effort?: string | null;
   idempotencyKey?: string | null;
   idempotency_key?: string | null;
+  capabilities?: readonly string[] | null;
   recoverReservation?: boolean;
   idempotencyFingerprint?: string | null;
 }
@@ -1482,6 +1484,7 @@ export class RunSupervisor {
       model,
       reasoningEffort,
     });
+    const capabilities = resolveCapabilities(options.capabilities ?? null);
     const runId =
       options.runId ||
       `${new Date().toISOString().replace(/[-:]/g, "").replace(/\.\d+Z$/, "Z")}_${crypto
@@ -1572,6 +1575,7 @@ export class RunSupervisor {
       max_rounds: maxRounds,
       prompt_language: promptLanguage,
       workspace: workspacePath,
+      capabilities,
     };
     if (reasoningEffort) reservation.reasoning_effort = reasoningEffort;
     if (options.idempotencyFingerprint) {
@@ -1637,8 +1641,22 @@ export class RunSupervisor {
     // The worker is launched with ``--no-dashboard`` and has no legitimate need
     // for this variable; retaining the rest of the environment preserves
     // provider/API-key compatibility.
-    const workerEnv: NodeJS.ProcessEnv = { ...process.env };
+    // Capability gating (addition over upstream): strip credential env for any
+    // integration the operator did not grant this run, and hand the worker a
+    // per-run MCP config with only the granted servers (browser + selected).
+    const grantedCapabilities = resolveCapabilities(
+      (reservation.capabilities as string[] | undefined) ?? null,
+    );
+    const workerEnv: NodeJS.ProcessEnv = gateWorkerEnv(process.env, grantedCapabilities);
     delete workerEnv.LH_HARNESS_WEB_TOKEN;
+    const runMcpConfig = writeRunMcpConfig(
+      runDir,
+      grantedCapabilities,
+      workerEnv,
+      process.env.LH_HARNESS_CLAUDECODE_MCP_CONFIG ?? null,
+    );
+    if (runMcpConfig) workerEnv.LH_HARNESS_CLAUDECODE_MCP_CONFIG = runMcpConfig;
+    else delete workerEnv.LH_HARNESS_CLAUDECODE_MCP_CONFIG;
     let worker: WorkerProcess;
     try {
       worker = supervisorRuntime.spawn(command, {

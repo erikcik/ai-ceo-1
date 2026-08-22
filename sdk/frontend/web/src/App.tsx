@@ -1359,10 +1359,10 @@ export default function App() {
     catch (reason) { if (requestId === artifactRequest.current) setArtifactText(String(reason)); }
   }
 
-  async function submitNewRun(task: string, roles: Record<PublicRole, RoleRuntimeConfig>, workspace: string, maxRounds: string, promptLanguage: 'en') {
+  async function submitNewRun(task: string, roles: Record<PublicRole, RoleRuntimeConfig>, workspace: string, maxRounds: string, promptLanguage: 'en', capabilities: string[]) {
     setControlBusy(true); setError('');
     const manager = roles.manager;
-    const payload = { task, agent: manager.agent, model: manager.model || undefined, roles, workspace: workspace || undefined, max_rounds: normaliseMaxRounds(maxRounds), prompt_language: promptLanguage };
+    const payload = { task, agent: manager.agent, model: manager.model || undefined, roles, workspace: workspace || undefined, max_rounds: normaliseMaxRounds(maxRounds), prompt_language: promptLanguage, capabilities };
     const request = operationKey('create', JSON.stringify(payload));
     try {
       const created = await createRun(payload, request.key);
@@ -1378,6 +1378,14 @@ export default function App() {
     setCapabilities(next.capabilities);
   }
 
+  const connectionLabel = !runId
+    ? text('Idle')
+    : connection === 'connected' ? text('Connected')
+    : connection === 'loading' ? text('Connecting')
+    : connection === 'reconnecting' ? text('Reconnecting')
+    : connection === 'closed' ? text('Disconnected')
+    : text('Connection error');
+
   return (
     <div className="codex-shell codex-workbench">
       <aside className="codex-sidebar">
@@ -1389,7 +1397,10 @@ export default function App() {
           {filteredRuns.map((run) => <button key={run.id} className={`session-item ${run.id === runId ? 'selected' : ''}`} onClick={() => setRunId(run.id)}><span className={statusClass(run.status)} /><span className="session-copy"><strong>{run.task || 'Untitled task'}</strong><small>{run.id}</small></span></button>)}
           {!filteredRuns.length && <div className="sidebar-empty">{text('No tasks yet')}</div>}
         </div>
-        <div className="sidebar-footer"><span className={`connection-dot connection-${runId ? connection : 'idle'}`} />{!runId ? text('Idle') : connection === 'connected' ? text('Connected') : connection === 'loading' ? text('Connecting') : connection === 'reconnecting' ? text('Reconnecting') : connection === 'closed' ? text('Disconnected') : text('Connection error')}<span>·</span> {text('Local workspace')}<button type="button" className="connection-settings" onClick={() => setAuthOpen(true)} title={text('Connection settings')} aria-label={text('Connection settings')}><KeyRound size={13} /></button>{meta?.capabilities?.reload && <button type="button" className="connection-settings" disabled={reloading} onClick={() => void reloadHarness()} title={text('Reload the harness (restart on current source)')} aria-label={text('Reload the harness')}><RotateCw size={13} className={reloading ? 'reload-spin' : ''} /></button>}</div>
+        <div className="sidebar-footer">
+          <span className="connection-state" title={`${connectionLabel} · ${text('Local workspace')}`}><span className={`connection-dot connection-${runId ? connection : 'idle'}`} /><span className="connection-copy"><span className="connection-phase">{connectionLabel}<span className="connection-sep">·</span></span>{' '}<span className="connection-phase">{text('Local workspace')}</span></span></span>
+          <span className="connection-actions"><button type="button" className="connection-settings" onClick={() => setAuthOpen(true)} title={text('Connection settings')} aria-label={text('Connection settings')}><KeyRound size={13} /></button>{meta?.capabilities?.reload && <button type="button" className="connection-settings" disabled={reloading} onClick={() => void reloadHarness()} title={text('Reload the harness (restart on current source)')} aria-label={text('Reload the harness')}><RotateCw size={13} className={reloading ? 'reload-spin' : ''} /></button>}</span>
+        </div>
       </aside>
 
       <main className="codex-main">
@@ -2012,7 +2023,7 @@ function taskWithAttachments(task: string, attachments: Attachment[]): string {
   return `${task}\n\nInput files (already uploaded to the workspace's \`inbox/\` folder; use these workspace-relative paths):\n${lines.join('\n')}`;
 }
 
-function DetailsDrawer({ creating, runId, snapshot, meta, selectedRound, setSelectedRound, tab, setTab, artifactList, artifactError, artifactName, artifactText, openArtifact, retryArtifacts, trajectoryRole, setTrajectoryRole, trajectoryData, trajectoryError, retryTrajectory, onClose, onCreate, onRefreshModels, controlBusy }: { creating: boolean; runId: string; snapshot: Snapshot; meta: WebMeta | null; selectedRound: number | null; setSelectedRound: (value: number) => void; tab: DetailsTab; setTab: (value: DetailsTab) => void; artifactList: ArtifactList | null; artifactError?: string; artifactName: string; artifactText: string; openArtifact: (round: number, name: string) => Promise<void>; retryArtifacts?: () => void; trajectoryRole: string; setTrajectoryRole: (value: string) => void; trajectoryData: TrajectoryView | null; trajectoryError?: string; retryTrajectory?: () => void; onClose: () => void; onCreate: (task: string, roles: Record<PublicRole, RoleRuntimeConfig>, workspace: string, maxRounds: string, promptLanguage: 'en') => Promise<void>; onRefreshModels: () => Promise<void>; controlBusy: boolean }) {
+function DetailsDrawer({ creating, runId, snapshot, meta, selectedRound, setSelectedRound, tab, setTab, artifactList, artifactError, artifactName, artifactText, openArtifact, retryArtifacts, trajectoryRole, setTrajectoryRole, trajectoryData, trajectoryError, retryTrajectory, onClose, onCreate, onRefreshModels, controlBusy }: { creating: boolean; runId: string; snapshot: Snapshot; meta: WebMeta | null; selectedRound: number | null; setSelectedRound: (value: number) => void; tab: DetailsTab; setTab: (value: DetailsTab) => void; artifactList: ArtifactList | null; artifactError?: string; artifactName: string; artifactText: string; openArtifact: (round: number, name: string) => Promise<void>; retryArtifacts?: () => void; trajectoryRole: string; setTrajectoryRole: (value: string) => void; trajectoryData: TrajectoryView | null; trajectoryError?: string; retryTrajectory?: () => void; onClose: () => void; onCreate: (task: string, roles: Record<PublicRole, RoleRuntimeConfig>, workspace: string, maxRounds: string, promptLanguage: 'en', capabilities: string[]) => Promise<void>; onRefreshModels: () => Promise<void>; controlBusy: boolean }) {
   const { language, text } = useUiLanguage();
   const backdrop = useBackdropDismiss(onClose);
   const [task, setTask] = useState('');
@@ -2026,6 +2037,15 @@ function DetailsDrawer({ creating, runId, snapshot, meta, selectedRound, setSele
   const [modelRefreshError, setModelRefreshError] = useState('');
   const [workspace, setWorkspace] = useState('');
   const [attachments, setAttachments] = useState<Attachment[]>([]);
+  const externalTools = meta?.external_tools ?? [];
+  const [grantedTools, setGrantedTools] = useState<Record<string, boolean>>({});
+  const toolsInitialised = useRef(false);
+  useEffect(() => {
+    if (toolsInitialised.current || !externalTools.length) return;
+    setGrantedTools(Object.fromEntries(externalTools.map((tool) => [tool.id, Boolean(tool.always_on || tool.default_on)])));
+    toolsInitialised.current = true;
+  }, [externalTools]);
+  const selectedCapabilities = externalTools.filter((tool) => tool.always_on || grantedTools[tool.id]).map((tool) => tool.id);
   const fileInput = useRef<HTMLInputElement | null>(null);
   const uploadsBusy = attachments.some((item) => item.status === 'uploading');
   async function attachFiles(list: FileList | null) {
@@ -2090,7 +2110,18 @@ function DetailsDrawer({ creating, runId, snapshot, meta, selectedRound, setSele
       <div className="role-runtime-list">{PUBLIC_ROLES.map((role) => <RoleRuntimePicker key={role.id} role={role} selection={roleSelections[role.id]} meta={meta} onChange={(value) => setRoleSelections((current) => ({ ...current, [role.id]: value }))} />)}</div>
       <label className="drawer-field"><span>{text('Max rounds')} <small>1–{MAX_ROUNDS}</small></span><input inputMode="numeric" type="text" pattern="[0-9]*" value={maxRounds} onChange={(event) => setMaxRounds(event.target.value.replace(/\D+/gu, ''))} onBlur={() => setMaxRounds(String(normaliseMaxRounds(maxRounds)))} /></label>
       <label className="drawer-field"><span>Workspace <small>{text('optional')}</small></span><input value={workspace} onChange={(event) => setWorkspace(event.target.value)} placeholder={text('Use the Web server workspace root')} /></label>
-      <div className="drawer-actions"><button onClick={onClose}>{text('Cancel')}</button><button className="primary-action" disabled={!task.trim() || controlBusy || uploadsBusy || PUBLIC_ROLES.some(({ id }) => !roleSelections[id].agent || roleSelections[id].custom && !roleSelections[id].model?.trim() || roleSelections[id].effortCustom && !roleSelections[id].reasoning_effort?.trim())} onClick={() => void onCreate(taskWithAttachments(task.trim(), attachments), resolvedRoles, workspace.trim(), maxRounds, 'en')}>{controlBusy ? text('Starting…') : text('Start task')}</button></div>
+      {externalTools.length > 0 && <div className="drawer-field tools-field"><span>{text('External tools')} <small>{text('what this run may use')}</small></span>
+        <ul className="tools-list">{externalTools.map((tool) => {
+          const on = Boolean(tool.always_on || grantedTools[tool.id]);
+          const blocked = !tool.always_on && !tool.credential_ready;
+          return <li key={tool.id} className={`tool-item ${on ? 'tool-on' : ''}`}>
+            <label className="tool-toggle"><input type="checkbox" checked={on} disabled={Boolean(tool.always_on) || blocked} onChange={(event) => setGrantedTools((current) => ({ ...current, [tool.id]: event.target.checked }))} /><span className="tool-name">{tool.label}{tool.always_on ? ` · ${text('always on')}` : ''}</span></label>
+            <p className="tool-summary">{tool.summary}{tool.note ? ` ${tool.note}` : ''}</p>
+            {blocked && <p className="tool-blocked">{text('No credential configured — add it to ~/.lh-harness/secrets.env, then reload.')}</p>}
+          </li>;
+        })}</ul>
+      </div>}
+      <div className="drawer-actions"><button onClick={onClose}>{text('Cancel')}</button><button className="primary-action" disabled={!task.trim() || controlBusy || uploadsBusy || PUBLIC_ROLES.some(({ id }) => !roleSelections[id].agent || roleSelections[id].custom && !roleSelections[id].model?.trim() || roleSelections[id].effortCustom && !roleSelections[id].reasoning_effort?.trim())} onClick={() => void onCreate(taskWithAttachments(task.trim(), attachments), resolvedRoles, workspace.trim(), maxRounds, 'en', selectedCapabilities)}>{controlBusy ? text('Starting…') : text('Start task')}</button></div>
     </> : <>
       <div className="details-tabs" role="tablist" aria-label={text('Detail categories')}><button id="details-tab-artifacts" role="tab" aria-controls="details-panel-artifacts" aria-selected={tab === 'artifacts'} tabIndex={tab === 'artifacts' ? 0 : -1} className={tab === 'artifacts' ? 'active' : ''} onClick={() => setTab('artifacts')}>{text('Run records')}</button><button id="details-tab-trajectory" role="tab" aria-controls="details-panel-trajectory" aria-selected={tab === 'trajectory'} tabIndex={tab === 'trajectory' ? 0 : -1} className={tab === 'trajectory' ? 'active' : ''} onClick={() => setTab('trajectory')}>{text('Trajectory')}</button><button id="details-tab-events" role="tab" aria-controls="details-panel-events" aria-selected={tab === 'events'} tabIndex={tab === 'events' ? 0 : -1} className={tab === 'events' ? 'active' : ''} onClick={() => setTab('events')}>{text('Events')}</button></div>
       <div className="drawer-rounds"><span>{text('Rounds')}</span>{hiddenRounds > 0 && <button className="drawer-round-more" onClick={() => setRoundLimit((limit) => Math.min(snapshot.rounds.length, limit + MAX_TRAJECTORY_ROUNDS))}>{text(`+${hiddenRounds} earlier`)}</button>}{roundChoices.map((round) => <button className={round.round_index === selectedRound ? 'active' : ''} key={round.round_index} onClick={() => setSelectedRound(round.round_index)}>R{round.round_index}</button>)}</div>

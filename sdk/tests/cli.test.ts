@@ -783,7 +783,7 @@ test("the help formatter suppresses defaults that argparse would hide", () => {
 
   // A real default is printed…
   assert.ok(runHelp.includes("Agent implementation for every role. (default:"));
-  assert.ok(runHelp.includes("(default: 300)"));
+  assert.ok(runHelp.includes("(default: 900)"));
   // …while `None`, `[]` and nargs==0 flags are not.
   assert.ok(!runHelp.includes("(default: None)"));
   assert.ok(!runHelp.includes("(default: True)"));

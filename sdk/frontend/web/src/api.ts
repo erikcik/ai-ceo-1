@@ -120,7 +120,11 @@ export interface WebMeta {
   models?: Record<string, ModelChoice[]>;
   defaults?: { agent?: string; model?: string; roles?: Record<string, RoleRuntimeConfig> };
   model_discovery?: Record<string, ModelDiscovery>;
+  /** External-tool capabilities the operator can grant per task. */
+  external_tools?: ExternalTool[];
 }
+
+export interface ExternalTool { id: string; label: string; summary: string; note?: string; always_on?: boolean; default_on?: boolean; credential_ready?: boolean }
 
 export interface AgentChoice {
   id: string;

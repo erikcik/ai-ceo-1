@@ -60,10 +60,10 @@ test("the init template parses back into the documented defaults", () => {
     dashboard_port: 0,
     mcp_add_dir: [],
     guard_exclude_path: [],
-    manager_timeout: 300,
+    manager_timeout: 900,
     gui_executor_timeout: 1800,
     cli_executor_timeout: 1800,
-    auditor_timeout: 300,
+    auditor_timeout: 900,
   });
 });
 

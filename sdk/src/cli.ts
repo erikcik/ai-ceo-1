@@ -42,6 +42,7 @@ import {
 } from "./types.js";
 import type { HarnessConfig, PromptLanguage } from "./types.js";
 import { normaliseReasoningEffort } from "./agent_registry.js";
+import { SECRETS_FILE, capabilityStatus, discoverHostSecrets, parseEnvFile } from "./capabilities.js";
 import { probeAgentCli, which } from "./utils/agent_cli.js";
 import type { AgentAdapter } from "./adapters/base.js";
 import type { DashboardState } from "./dashboard/state.js";
@@ -101,10 +102,10 @@ const _ROLE_SCOPES: Record<string, string> = Object.fromEntries(
 // Per-role episode budgets as (dest prefix, timeout seconds). The
 // executors get the long task timeout; the scheduler and auditors get the short one.
 const _BUDGET_OPTIONS: readonly (readonly [string, number])[] = [
-  ["manager", 300],
+  ["manager", 900],
   ["gui_executor", 1800],
   ["cli_executor", 1800],
-  ["auditor", 300],
+  ["auditor", 900],
 ];
 
 // ---------------------------------------------------------------------------
@@ -2841,6 +2842,41 @@ function _docker(argv: string[], options: { inherit?: boolean } = {}): { status:
 }
 
 
+
+const _SECRETS_HEADER = `# lh-harness capability credentials (user-scoped, 0600).
+# GitHub and Vercel tokens are auto-discovered from \`gh\` and the Vercel CLI on
+# \`start\`; add others by hand and reload:
+#   HIGGSFIELD_API_KEY=...
+#   RESEND_API_KEY=re_...      LH_EMAIL_FROM="you@example.com"
+`;
+
+/** Merge auto-discovered host tokens into ~/.lh-harness/secrets.env without
+ * clobbering values the user set by hand. Returns the merged map. */
+export function syncSecretsFile(): Record<string, string> {
+  const current = parseEnvFile(SECRETS_FILE);
+  const discovered = discoverHostSecrets();
+  let changed = false;
+  for (const [key, value] of Object.entries(discovered)) {
+    if (!current[key]) {
+      current[key] = value;
+      changed = true;
+    }
+  }
+  if (changed || !_isFile(SECRETS_FILE)) {
+    fs.mkdirSync(path.dirname(SECRETS_FILE), { recursive: true });
+    const body = Object.entries(current).map(([key, value]) => `${key}=${value}`).join("\n");
+    fs.writeFileSync(SECRETS_FILE, `${_SECRETS_HEADER}${body}\n`, { mode: 0o600 });
+  }
+  return current;
+}
+
+function _reportCapabilities(env: NodeJS.ProcessEnv): void {
+  for (const item of capabilityStatus(env)) {
+    if (item.alwaysOn) continue;
+    print(`${item.ready ? "[OK  ]" : "[--  ]"} ${item.label}: ${item.ready ? "credential present" : "no credential (add to ~/.lh-harness/secrets.env)"}`);
+  }
+}
+
 // --- `start` GUI preflight -------------------------------------------------
 // The sandbox image bakes playwright-mcp + Chromium; the host has to be
 // checked (and set up) so GUI subtasks are not silently browserless.
@@ -2943,6 +2979,9 @@ async function _startCommand(args: Namespace): Promise<number> {
   }
   if (!args["docker"]) {
     await _ensureHostComputerUse();
+    const secrets = syncSecretsFile();
+    for (const [key, value] of Object.entries(secrets)) if (!process.env[key]) process.env[key] = value;
+    _reportCapabilities(process.env);
     return await _startHost(workspace, port, Boolean(args["no_open"]));
   }
   return await _startDocker(workspace, port, Boolean(args["no_open"]));
@@ -3015,6 +3054,12 @@ async function _startDocker(workspace: string, port: number, noOpen: boolean): P
     return 2;
   }
   _verifySandboxGui();
+  // Capability credentials: discovered host tokens + hand-added keys. All are
+  // passed into the container; the supervisor gates each worker to the run's
+  // selected capabilities, so unselected secrets never reach an agent.
+  syncSecretsFile();
+  const secretsFileArgs = _isFile(SECRETS_FILE) ? ["--env-file", SECRETS_FILE] : [];
+  _reportCapabilities(parseEnvFile(SECRETS_FILE) as NodeJS.ProcessEnv);
   const token = ensureWebToken(workspace);
   const name = startContainerName(workspace);
   const inspect = _docker(["inspect", "--format", "{{.State.Status}} {{range $p, $b := .NetworkSettings.Ports}}{{range $b}}{{.HostPort}}{{end}}{{end}}", name]);
@@ -3056,6 +3101,7 @@ async function _startDocker(workspace: string, port: number, noOpen: boolean): P
     ...mounts,
     "--env-file",
     envFile,
+    ...secretsFileArgs,
     "-e",
     `LH_HARNESS_WEB_TOKEN=${token}`,
     "-e",

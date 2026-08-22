@@ -117,6 +117,36 @@ verification builds code, and `guard_exclude_paths = ["node_modules", ".next"]`
 so build churn is not mistaken for auditor tampering. Every field has a
 matching CLI flag; CLI > config > defaults.
 
+### External tools (GitHub, Vercel, Higgsfield, email)
+
+Each task's create form has an **External tools** section — toggles for what
+that run may use. The web browser is always on; GitHub, Vercel, Higgsfield and
+email are off by default and toggleable only when their credential is present.
+The grant is per-run: the supervisor gives a worker exactly the selected
+integrations' credentials and MCP servers, so an unselected tool is invisible
+to the agents that round (verified: granting only GitHub leaves no Vercel or
+email secret in the worker's environment). The grant is stored with the run and
+survives resume.
+
+Credentials live in `~/.lh-harness/secrets.env` (mode 600). `start` auto-fills
+GitHub and Vercel from your logged-in `gh` and Vercel CLIs; add the rest by
+hand and use the workbench reload button:
+
+```
+# ~/.lh-harness/secrets.env
+GH_TOKEN=...            # auto-discovered from `gh auth token`
+VERCEL_TOKEN=...        # auto-discovered from the Vercel CLI
+HIGGSFIELD_API_KEY=...  # add by hand
+RESEND_API_KEY=re_...   # add by hand
+LH_EMAIL_FROM="you@example.com"
+```
+
+Use scoped tokens (a fine-grained GitHub PAT limited to the repos you want the
+agents touching; a project-scoped Vercel token). The old harness's
+publish/irreversible gate is gone, so a granted token means a push or deploy is
+one command away — keep an "ask before deploying to production / sending email"
+line in the task, which the Manager's `ask` gate will honor.
+
 ### GUI / browser tasks
 
 `start` handles this: in `--docker` the image bakes Playwright MCP + headless

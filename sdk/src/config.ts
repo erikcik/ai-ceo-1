@@ -103,10 +103,10 @@ dashboard = true
 dashboard_port = 0
 
 [run.timeouts]
-manager = 300
+manager = 900
 gui_executor = 1800
 cli_executor = 1800
-auditor = 300
+auditor = 900
 
 [run.roles.manager]
 # agent = "claude_code"

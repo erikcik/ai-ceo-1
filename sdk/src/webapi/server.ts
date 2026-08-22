@@ -20,6 +20,7 @@ import { RunSupervisor } from "../supervisor/service.js";
 import { TERMINAL_STATUSES, canonicalLifecycleStatus, resumeEpoch } from "../supervisor/lifecycle.js";
 import { DEFAULT_CLAUDE_MODEL, DEFAULT_MAX_ROUNDS, MAX_ROUNDS } from "../types.js";
 import { pyStrip } from "../utils/pystr.js";
+import { CAPABILITIES, capabilityStatus } from "../capabilities.js";
 import {
   safeRunControl,
   safeRunDir,
@@ -998,6 +999,21 @@ export function createApp(options: CreateAppOptions = {}): WebApp {
         ),
       },
       model_discovery: catalogue.model_discovery as Record<string, Dict>,
+      // Addition over upstream: the external-tool capabilities the operator can
+      // grant per task, each annotated with whether its credential is present
+      // in this deployment's environment.
+      external_tools: (() => {
+        const ready = new Map(capabilityStatus(process.env).map((item) => [item.id, item.ready]));
+        return CAPABILITIES.map((cap) => ({
+          id: cap.id,
+          label: cap.label,
+          summary: cap.summary,
+          note: cap.note ?? "",
+          always_on: Boolean(cap.alwaysOn),
+          default_on: Boolean(cap.defaultOn ?? cap.alwaysOn),
+          credential_ready: Boolean(ready.get(cap.id)),
+        }));
+      })(),
     });
   }
 
@@ -1120,6 +1136,9 @@ export function createApp(options: CreateAppOptions = {}): WebApp {
       if (!["en", "zh"].includes(promptLanguage)) {
         throw new Error("prompt_language must be en or zh");
       }
+      const capabilities = Array.isArray(payload.capabilities)
+        ? (payload.capabilities as unknown[]).map((item) => String(item)).slice(0, 32)
+        : null;
       created = supervisor.createRun({
         task,
         agent,
@@ -1128,6 +1147,7 @@ export function createApp(options: CreateAppOptions = {}): WebApp {
         workspace,
         maxRounds,
         promptLanguage,
+        capabilities,
         runId: runIdValue,
         reasoningEffort,
         idempotencyKey: _boundedCommandId(headerValue(req.headers, "idempotency-key")),

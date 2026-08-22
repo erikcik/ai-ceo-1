@@ -30,7 +30,7 @@ FROM node:22-bookworm-slim
 # executor tooling; no GUI/computer-use stack ships in the image (CLI subtasks
 # only) -- install a computer-use plugin on a desktop host instead.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      git ca-certificates python3 curl jq procps \
+      git gh ca-certificates python3 curl jq procps \
  && rm -rf /var/lib/apt/lists/*
 
 # The Agent SDK spawns the `claude` CLI; it is not vendored in the SDK package.
