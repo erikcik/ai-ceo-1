@@ -1,0 +1,10 @@
+# Keep the build context small and never ship secrets or host state.
+**/node_modules
+**/dist
+.lh-harness/
+workspace/
+runs/
+.git
+*.log
+docker/.env
+.claude/

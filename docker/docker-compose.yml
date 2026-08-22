@@ -1,0 +1,35 @@
+# Containerised LongHorizon-Harness.
+#
+#   cp docker/.env.example docker/.env            # token(s) + LH_HARNESS_WEB_TOKEN
+#   docker compose -f docker/docker-compose.yml build
+#   docker compose -f docker/docker-compose.yml run --rm harness doctor
+#   docker compose -f docker/docker-compose.yml up web     # http://127.0.0.1:8799
+#   docker compose -f docker/docker-compose.yml run --rm harness run --task @task.md
+#
+# LH_WORKSPACE (docker/.env) is the project the agents act on (default ./workspace); every run record
+# lands in ./workspace/.lh-harness/runs/<run-id>/ and survives the container.
+services:
+  harness:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    image: lh-harness:latest
+    env_file:
+      - .env
+    volumes:
+      - ${LH_WORKSPACE:-../workspace}:/work
+    command: ["help"]
+
+  web:
+    image: lh-harness:latest
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    env_file:
+      - .env
+    volumes:
+      - ${LH_WORKSPACE:-../workspace}:/work
+    ports:
+      - "127.0.0.1:8799:8799"
+    command: ["web"]
+    restart: unless-stopped
