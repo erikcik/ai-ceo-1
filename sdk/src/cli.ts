@@ -1602,7 +1602,11 @@ async function _doctorCommand(): Promise<number> {
   }
 
   warnings += await _doctorNodeToolchain();
-  warnings += await _doctorPluginState();
+  const pluginResult = await _doctorPluginState();
+  // The browser self-test signals a hard failure with a +1000 sentinel so a
+  // non-launching browser fails `doctor` (exit 1), not just warns.
+  if (pluginResult >= 1000) { failures += 1; warnings += pluginResult - 1000; }
+  else warnings += pluginResult;
 
   const updateResult = await updateCheck.result(3.0);
   warnings += _reportUpdateResult(updateResult) ? 1 : 0;
@@ -1707,6 +1711,113 @@ async function _doctorPluginState(): Promise<number> {
 }
 
 /** Report which plugin each agent will load, following the priority order. */
+
+/**
+ * Actually launch a resolved stdio MCP server and speak JSON-RPC to it, so an
+ * "OK" means the server ran, not merely that a config file was written. Does
+ * initialize + tools/list for any server; when a browser tool is present it
+ * also navigates a data: URL to prove the browser really launches (the step
+ * that fails on a missing/blocked Chromium). Never throws.
+ */
+export async function verifyMcpServer(
+  command: string,
+  serverArgs: string[],
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<{ ok: boolean; detail: string; tools: number }> {
+  return await new Promise((resolve) => {
+    let child: child_process.ChildProcessByStdio<import("node:stream").Writable, import("node:stream").Readable, null>;
+    try {
+      child = child_process.spawn(command, serverArgs, { stdio: ["pipe", "pipe", "ignore"], env });
+    } catch (exc) {
+      resolve({ ok: false, detail: `could not launch ${command}: ${_text(exc)}`, tools: 0 });
+      return;
+    }
+    let buffer = "";
+    let seq = 0;
+    let toolCount = 0;
+    let settled = false;
+    const pending = new Map<number, (message: Record<string, unknown>) => void>();
+    const done = (ok: boolean, detail: string): void => {
+      if (settled) return;
+      settled = true;
+      try { child.kill("SIGKILL"); } catch { /* already gone */ }
+      resolve({ ok, detail, tools: toolCount });
+    };
+    const timer = setTimeout(() => done(false, "server did not respond within 45s"), 45_000);
+    if (typeof timer.unref === "function") timer.unref();
+    const call = (method: string, params: Record<string, unknown>): Promise<Record<string, unknown>> => {
+      const id = (seq += 1);
+      child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id, method, params })}\n`);
+      return new Promise((ok) => pending.set(id, ok));
+    };
+    child.on("error", (exc) => done(false, `spawn error: ${_text(exc)}`));
+    child.stdout.on("data", (chunk: Buffer) => {
+      buffer += chunk.toString("utf-8");
+      let index: number;
+      while ((index = buffer.indexOf("\n")) >= 0) {
+        const line = buffer.slice(0, index);
+        buffer = buffer.slice(index + 1);
+        if (!line.trim()) continue;
+        try {
+          const message = JSON.parse(line) as Record<string, unknown>;
+          const id = message.id as number | undefined;
+          if (id !== undefined && pending.has(id)) {
+            const settle = pending.get(id)!;
+            pending.delete(id);
+            settle(message);
+          }
+        } catch { /* not a JSON-RPC line */ }
+      }
+    });
+    void (async () => {
+      try {
+        await call("initialize", { protocolVersion: "2024-11-05", capabilities: {}, clientInfo: { name: "lh-doctor", version: "0" } });
+        child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" })}\n`);
+        const listed = await call("tools/list", {});
+        const tools = ((listed.result as Record<string, unknown> | undefined)?.tools as unknown[]) ?? [];
+        toolCount = tools.length;
+        const names = new Set(tools.map((tool) => String((tool as Record<string, unknown>).name)));
+        if (!toolCount) { done(false, "server exposed no tools"); return; }
+        if (names.has("browser_navigate")) {
+          const nav = await call("tools/call", { name: "browser_navigate", arguments: { url: "data:text/html,<title>lh-selftest</title>" } });
+          const text = JSON.stringify((nav.result as Record<string, unknown> | undefined)?.content ?? "");
+          if (!text.includes("lh-selftest") && !text.toLowerCase().includes("data:")) {
+            done(false, "browser did not navigate the test page");
+            return;
+          }
+          done(true, `browser launched and navigated a test page (${toolCount} tools)`);
+          return;
+        }
+        done(true, `server responded with ${toolCount} tools`);
+      } catch (exc) {
+        done(false, _text(exc));
+      }
+    })();
+  });
+}
+
+/** Resolve the browser MCP server the way a worker would, then verify it. */
+export async function verifyResolvedBrowser(): Promise<{ ok: boolean; detail: string } | null> {
+  let configPath = process.env.LH_HARNESS_CLAUDECODE_MCP_CONFIG || null;
+  if (!configPath) {
+    try {
+      const { activePluginForAgent } = await import("./plugins/state.js");
+      const active = activePluginForAgent("claude_code");
+      configPath = active && active[1] ? active[1] : null;
+    } catch { configPath = null; }
+  }
+  if (!configPath || !_isFile(configPath)) return null;
+  type ServerSpec = { command?: string; args?: string[] };
+  let spec: ServerSpec | null = null;
+  try {
+    const servers = (JSON.parse(fs.readFileSync(configPath, "utf-8")).mcpServers ?? {}) as Record<string, ServerSpec>;
+    spec = servers.playwright ?? (Object.values(servers)[0] as ServerSpec | undefined) ?? null;
+  } catch { return null; }
+  if (!spec?.command) return null;
+  const result = await verifyMcpServer(spec.command, spec.args ?? []);
+  return { ok: result.ok, detail: result.detail };
+}
+
 async function _doctorActivePlugins(): Promise<number> {
   const { activePluginForAgent } = await import("./plugins/state.js");
   const { PluginError } = await import("./plugins/errors.js");
@@ -1726,12 +1837,24 @@ async function _doctorActivePlugins(): Promise<number> {
       doctorLine(
         "SKIP",
         `Computer use (${agent})`,
-        "no plugin installed; GUI subtasks will have no computer-use server",
+        "no plugin installed (a baked or --claude-mcp-config server may still provide the browser — see the self-test line)",
       );
       continue;
     }
     const [pluginId, config] = active;
     doctorLine("OK", `Computer use (${agent})`, `${pluginId} (${config || "loaded natively by the agent"})`);
+  }
+  // The browser can also come from a baked config (the container image) with no
+  // installed plugin, so verify it independently of plugin resolution — this is
+  // the check that actually launches Chromium and drives a page.
+  const verified = await verifyResolvedBrowser();
+  if (verified === null) {
+    doctorLine("SKIP", "Computer use (self-test)", "no browser server resolved; GUI subtasks will have no browser");
+  } else if (verified.ok) {
+    doctorLine("OK", "Computer use (self-test)", verified.detail);
+  } else {
+    doctorLine("FAIL", "Computer use (self-test)", verified.detail);
+    return warnings + 1000; // surfaced as a required failure by the caller
   }
   return warnings;
 }
@@ -2943,7 +3066,9 @@ async function _ensureHostComputerUse(): Promise<void> {
     const { activePluginForAgent } = await import("./plugins/state.js");
     const active = activePluginForAgent("claude_code");
     if (active) {
-      print(`[OK  ] Computer use: ${active[0]} is configured for GUI subtasks`);
+      const verified = await verifyResolvedBrowser();
+      if (verified?.ok) print(`[OK  ] Computer use: ${active[0]} verified — ${verified.detail}`);
+      else print(`[WARN] Computer use: ${active[0]} is configured but the self-test failed${verified ? ` (${verified.detail})` : ""}; GUI subtasks may not work.`);
       return;
     }
     print("[.. ] Computer use: no browser server configured; setting up playwright-mcp…");
@@ -2968,11 +3093,13 @@ async function _ensureHostComputerUse(): Promise<void> {
       args,
     });
     recordInstall("playwright-mcp", { agents: ["claude_code"], mcpConfigs: { claude_code: config }, mcpServerName: "playwright" });
-    print(
-      args.includes("chrome")
-        ? "[OK  ] Computer use: playwright-mcp will drive the system Chrome headlessly (no download needed)"
-        : "[OK  ] Computer use: playwright-mcp + downloaded Chromium ready",
-    );
+    const verified = await verifyResolvedBrowser();
+    if (verified?.ok) {
+      print(`[OK  ] Computer use: playwright-mcp verified — ${verified.detail}`);
+    } else {
+      eprint(`[WARN] Computer use: playwright-mcp was set up but the browser self-test failed${verified ? ` (${verified.detail})` : ""}.`);
+      eprint("       GUI subtasks may fall back to no browser; run `lh-harness doctor` for detail.");
+    }
   } catch (exc) {
     eprint(`[WARN] Computer use setup failed (${_text(exc)}); GUI subtasks will have no browser.`);
     eprint("       Run `lh-harness plugin install playwright-mcp` manually.");
