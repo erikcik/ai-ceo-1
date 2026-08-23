@@ -24,6 +24,7 @@ import {
   Files,
   FlaskConical,
   FolderOpen,
+  History,
   ListChecks,
   LoaderCircle,
   KeyRound,
@@ -73,7 +74,7 @@ import { useRunFeed } from './useRunFeed';
 import { uiText, useUiLanguage, type UiLanguage } from './i18n';
 
 type DetailsTab = 'artifacts' | 'trajectory' | 'events';
-type MessageKind = 'user' | 'plan' | 'assistant' | 'verification' | 'final' | 'live';
+type MessageKind = 'user' | 'plan' | 'assistant' | 'verification' | 'final' | 'live' | 'history';
 
 function readRunId(): string {
   try {
@@ -213,6 +214,8 @@ interface ConversationMessage {
   sortRound?: number;
   /** Whether the text is backed by the harness completion authority. */
   authority?: 'final_response' | 'auditor' | 'report' | 'none';
+  /** Rounds folded away by the history control ('history' messages only). */
+  hidden?: number;
 }
 
 type ActivityAction = 'read' | 'edit' | 'validate' | 'search' | 'task' | 'screenshot' | 'command' | 'result' | 'note';
@@ -589,7 +592,7 @@ function roundForTime(snapshot: Snapshot, time: number | undefined): number {
   return slot;
 }
 
-function conversationFor(snapshot: Snapshot, trajectoryMap: Record<string, TrajectoryView>, liveTrajectory: TrajectoryView | null, artifacts: ArtifactProjection, language: UiLanguage): ConversationMessage[] {
+function conversationFor(snapshot: Snapshot, trajectoryMap: Record<string, TrajectoryView>, liveTrajectory: TrajectoryView | null, artifacts: ArtifactProjection, language: UiLanguage, showAllRounds: boolean): ConversationMessage[] {
   const messages: ConversationMessage[] = [];
   const task = snapshot.mission.task.trim();
   const taskTime = snapshot.run.started_at || snapshot.events.find((event) => event.type === 'run.started')?.ts;
@@ -597,18 +600,22 @@ function conversationFor(snapshot: Snapshot, trajectoryMap: Record<string, Traje
   // notice, so it gets a slot below the first round rather than round 0.
   if (task) messages.push({ id: 'task', kind: 'user', role: 'You', title: 'You', text: task, sortTime: taskTime || undefined, sortRound: -1 });
 
-  const hiddenRounds = Math.max(0, snapshot.rounds.length - MAX_TRAJECTORY_ROUNDS);
-  if (hiddenRounds > 0) {
+  // Long tasks fold their older rounds away by default so the feed stays
+  // responsive, but the fold is a control rather than a dead end: the marker
+  // below expands the whole history in place and collapses it again.
+  const hiddenRounds = showAllRounds ? 0 : Math.max(0, snapshot.rounds.length - MAX_TRAJECTORY_ROUNDS);
+  if (hiddenRounds > 0 || (showAllRounds && snapshot.rounds.length > MAX_TRAJECTORY_ROUNDS)) {
     messages.push({
       id: 'history-collapsed',
-      kind: 'plan',
+      kind: 'history',
       role: 'LongHorizon',
       sortRound: 0,
-      title: uiText(language, 'Earlier rounds collapsed'),
-      text: uiText(language, `${hiddenRounds} earlier rounds were collapsed to keep long tasks responsive. Open Details → Trajectory / Events to inspect them.`),
+      hidden: hiddenRounds,
+      title: hiddenRounds > 0 ? uiText(language, 'Earlier rounds collapsed') : uiText(language, 'Showing every round'),
+      text: '',
     });
   }
-  for (const round of snapshot.rounds.slice(-MAX_TRAJECTORY_ROUNDS)) {
+  for (const round of (showAllRounds ? snapshot.rounds : snapshot.rounds.slice(-MAX_TRAJECTORY_ROUNDS))) {
     const managerText = managerPlanText(round);
     if (useful(managerText)) {
       messages.push({
@@ -816,6 +823,8 @@ export default function App() {
   const [trajectoryReload, setTrajectoryReload] = useState(0);
   const [trajectories, setTrajectories] = useState<Record<string, TrajectoryView>>({});
   const [followLatest, setFollowLatest] = useState(true);
+  // Older rounds are folded out of the feed by default; this opens them in place.
+  const [showAllRounds, setShowAllRounds] = useState(false);
   const [mobileStatusOpen, setMobileStatusOpen] = useState(false);
   const [authOpen, setAuthOpen] = useState(false);
   const [authRevision, setAuthRevision] = useState(0);
@@ -854,7 +863,7 @@ export default function App() {
     .map(([, trajectory]) => trajectory)
     .slice(-MAX_TRAJECTORY_ROUNDS * 4), [trajectories]);
   const executionArtifacts = useMemo(() => projectArtifactView(orderedTrajectories, { maxFiles: 200, maxValidations: 24 }), [orderedTrajectories]);
-  const messages = useMemo(() => conversationFor(snapshot, trajectories, activeRole ? trajectories[`${activeRound}:${activeRole}`] || null : null, executionArtifacts, language), [snapshot, activeRole, activeRound, trajectories, executionArtifacts, language]);
+  const messages = useMemo(() => conversationFor(snapshot, trajectories, activeRole ? trajectories[`${activeRound}:${activeRole}`] || null : null, executionArtifacts, language, showAllRounds), [snapshot, activeRole, activeRound, trajectories, executionArtifacts, language, showAllRounds]);
   // A stale approval record can survive a stop/crash. Keep it in Details for
   // audit history, but never render an actionable card after lifecycle has
   // become terminal; doing so suggests that clicking it can resume a dead run.
@@ -997,6 +1006,7 @@ export default function App() {
     setArtifactText('');
     setTrajectoryData(null);
     setTrajectoryError('');
+    setShowAllRounds(false);
   }, [runId]);
 
   useEffect(() => {
@@ -1408,7 +1418,9 @@ export default function App() {
 
         <section className="conversation" aria-label="LongHorizon conversation" ref={conversationRef} onScroll={(event) => { const node = event.currentTarget; setFollowLatest(node.scrollHeight - node.scrollTop - node.clientHeight < 48); }}>
           {!runId && <div className="welcome"><div className="welcome-mark"><Sparkles size={20} /></div><h1>{text('What do you want to accomplish?')}</h1><p>{text('Start a real LongHorizon task. Plans, intermediate work, verification, and the final answer will appear here as they happen.')}</p>{meta && !canCreateRun && <p className="welcome-note">{text('This connection is read-only. Start ')}<code>lh-harness web</code>{text(' to create tasks.')}</p>}{!meta && <p className="welcome-note">{text('Connecting to the Web service…')}</p>}<button className="welcome-button" disabled={!canCreateRun} onClick={() => { setCreatingNew(true); setDetailsOpen(true); }}><Plus size={15} />{text('Start task')}</button></div>}
-          {runId && messages.map((message) => <ConversationMessage key={message.id} message={message} />)}
+          {runId && messages.map((message) => message.kind === 'history'
+            ? <HistoryToggle key={message.id} hidden={message.hidden || 0} total={snapshot.rounds.length} expanded={showAllRounds} onToggle={() => setShowAllRounds((open) => !open)} />
+            : <ConversationMessage key={message.id} message={message} />)}
           {runId && !messages.length && <div className="empty-conversation"><span className="thinking-dot" />{text('Waiting for LongHorizon to start…')}</div>}
           {['running', 'starting', 'stopping', 'aborting'].includes(snapshot.run.status) && <div className="working-line" role="status" aria-live="polite"><span className="thinking-dot" /><span>{snapshot.run.status === 'stopping' || snapshot.run.status === 'aborting' ? text('Finishing up and stopping the worker') : activeRole ? text(`${roleTitle(activeRole)} is working`) : text('LongHorizon is working')}</span></div>}
           {statusView.awaitingHandoff && <div className="working-line" role="status" aria-live="polite"><span className="thinking-dot" /><span>{text('Submitted. Waiting for the worker to pick it up…')}</span></div>}
@@ -1694,6 +1706,23 @@ function ExecutionArtifacts({ projection, live }: { projection: ArtifactProjecti
     <EditedFilesCard projection={projection.files} />
     <ValidationResults projection={projection.validations} />
   </div>;
+}
+
+function HistoryToggle({ hidden, total, expanded, onToggle }: { hidden: number; total: number; expanded: boolean; onToggle: () => void }) {
+  const { text } = useUiLanguage();
+  return <article className="conversation-message message-history">
+    <div className="message-avatar"><History size={12} /></div>
+    <div className="message-body">
+      <div className="message-meta"><strong>{expanded ? text(`All ${total} rounds shown`) : text(`${hidden} earlier rounds hidden`)}</strong></div>
+      <p className="history-note">{expanded
+        ? text('The full history is in the feed. Collapsing keeps only the most recent rounds rendered, which keeps long tasks responsive.')
+        : text('Older rounds are folded away so long tasks stay responsive. Open them here, or inspect them in Details → Trajectory / Events.')}</p>
+      <button type="button" className="history-toggle" onClick={onToggle} aria-expanded={expanded}>
+        {expanded ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
+        <span>{expanded ? text('Collapse earlier rounds') : text(`Show ${hidden} earlier rounds`)}</span>
+      </button>
+    </div>
+  </article>;
 }
 
 function ConversationMessage({ message }: { message: ConversationMessage }) {

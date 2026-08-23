@@ -1974,7 +1974,31 @@ async function _webCommand(args: Namespace): Promise<number> {
 }
 
 /** Apply shared CLI policy and run the Web workbench in the foreground. */
+
+/**
+ * Host serving preflight (browser MCP + credentials), shared by `start` and by
+ * `web`/`dashboard`. Skipped when LH_HARNESS_CLAUDECODE_MCP_CONFIG is already
+ * set, which is the case inside the container image (the browser is baked and
+ * configured there); running the npm/browser setup in that context is wrong.
+ */
+async function ensureHostServePreflight(): Promise<void> {
+  if (process.env.LH_HARNESS_CLAUDECODE_MCP_CONFIG) return; // container: already wired
+  await _ensureHostComputerUse();
+  try {
+    const { activePluginForAgent } = await import("./plugins/state.js");
+    const active = activePluginForAgent("claude_code");
+    if (active && active[1]) process.env.LH_HARNESS_CLAUDECODE_MCP_CONFIG = active[1];
+  } catch { /* no browser plugin: the per-run config simply omits it */ }
+  const secrets = syncSecretsFile();
+  for (const [key, value] of Object.entries(secrets)) if (!process.env[key]) process.env[key] = value;
+  _reportCapabilities(process.env);
+}
+
 async function _serveWebWorkbench(args: Namespace, runWebServer: WebServerRunner): Promise<number> {
+  // Wire the browser MCP + credentials for host serving, just like `start`,
+  // so a run created from `web`/`dashboard` has real GUI access instead of
+  // falling back to desktop screencapture (which needs Screen Recording).
+  await ensureHostServePreflight();
   const host = String(args["host"]);
   const port = Number(args["port"]);
   const authToken = (args["auth_token"] ?? null) as string | null;
@@ -2984,15 +3008,7 @@ async function _startCommand(args: Namespace): Promise<number> {
     print(`Using config: ${path.resolve(PROJECT_CONFIG_PATH)}`);
   }
   if (!args["docker"]) {
-    await _ensureHostComputerUse();
-    try {
-      const { activePluginForAgent } = await import("./plugins/state.js");
-      const active = activePluginForAgent("claude_code");
-      if (active && active[1]) process.env.LH_HARNESS_CLAUDECODE_MCP_CONFIG = active[1];
-    } catch { /* no browser plugin: the per-run config simply omits it */ }
-    const secrets = syncSecretsFile();
-    for (const [key, value] of Object.entries(secrets)) if (!process.env[key]) process.env[key] = value;
-    _reportCapabilities(process.env);
+    await ensureHostServePreflight();
     return await _startHost(workspace, port, Boolean(args["no_open"]));
   }
   return await _startDocker(workspace, port, Boolean(args["no_open"]));

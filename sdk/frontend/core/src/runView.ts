@@ -49,7 +49,7 @@ export function roundSummary(round: RoundView): string {
   return parts.join(' · ') || (round.in_progress ? 'In progress' : 'Recorded');
 }
 
-export type TranscriptKind = 'plan' | 'assistant' | 'verification' | 'live' | 'user' | 'final';
+export type TranscriptKind = 'history' | 'plan' | 'assistant' | 'verification' | 'live' | 'user' | 'final';
 
 export interface TranscriptOrder {
   kind: TranscriptKind;
@@ -60,7 +60,8 @@ export interface TranscriptOrder {
 
 /** Order inside one round for entries that carry no usable timestamp. */
 const TRANSCRIPT_STAGE_RANK: Record<TranscriptKind, number> = {
-  plan: 1, assistant: 2, verification: 3, live: 4, user: 5, final: 6,
+  // `history` marks the fold above a round's own entries, so it ranks first.
+  history: 0, plan: 1, assistant: 2, verification: 3, live: 4, user: 5, final: 6,
 };
 
 /**

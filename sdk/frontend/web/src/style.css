@@ -155,6 +155,11 @@ button:disabled { cursor: not-allowed; opacity: .45; }
 .message-text code { padding: 2px 5px; border-radius: 4px; color: var(--ink-soft); background: var(--faint); font: 12px var(--mono); }
 .message-text a { color: var(--accent-deep); text-decoration: none; overflow-wrap: anywhere; }
 .message-text a:hover { text-decoration: underline; }
+.message-history .message-meta strong { color: var(--ink-soft); font-size: 12px; font-weight: 500; }
+.history-note { margin: 4px 0 9px; color: var(--mute); font-size: 12px; line-height: 1.55; }
+.history-toggle { display: inline-flex; align-items: center; gap: 6px; padding: 5px 11px 5px 9px; border: 1px solid var(--line); border-radius: 999px; color: var(--ink-soft); background: var(--paper); font: 500 12px var(--sans); }
+.history-toggle:hover { border-color: var(--line-strong); background: var(--faint); }
+.history-toggle svg { color: var(--mute); }
 .message-code { margin: 0 0 12px; padding: 11px 12px; overflow-x: auto; border: 1px solid var(--line); border-radius: 7px; color: var(--ink-soft); background: var(--faint); font: 12px/1.55 var(--mono); white-space: pre; }
 .message-heading p { margin-bottom: 7px; }
 .message-hint { display: block; margin-top: 7px; color: var(--mute-soft); font-size: 10px; }

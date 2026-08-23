@@ -21,7 +21,7 @@ import { expanduser } from "../utils/agent_cli.js";
 import { PluginError } from "./errors.js";
 
 // Preference order when several plugins are installed.
-export const PLUGIN_PRIORITY: readonly string[] = ["open-computer-use", "clawdcursor"];
+export const PLUGIN_PRIORITY: readonly string[] = ["open-computer-use", "clawdcursor", "playwright-mcp"];
 
 const _STATE_FILE = "installed.json";
 
