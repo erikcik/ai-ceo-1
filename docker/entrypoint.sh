@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # Container entrypoint. Validates auth, sets a git identity, then dispatches to
-# the `lh-harness` CLI. Auth is read from the environment and never written to
+# the `lh-harness-eray` CLI. Auth is read from the environment and never written to
 # disk or logged.
 set -euo pipefail
 
@@ -30,15 +30,15 @@ case "$cmd" in
   web|dashboard)
     # The workbench is the control plane. Binding beyond loopback requires a
     # bearer token (LH_HARNESS_WEB_TOKEN) -- the CLI refuses otherwise.
-    exec lh-harness web --host 0.0.0.0 --port "$WEB_PORT" --no-open \
+    exec lh-harness-eray web --host 0.0.0.0 --port "$WEB_PORT" --no-open \
       --workspace-root /work --runs-root /work/.lh-harness/runs "$@"
     ;;
   run)
-    # lh-harness run --task "@task.md" [--max-rounds N] [--model ...] ...
-    exec lh-harness run --no-dashboard "$@"
+    # lh-harness-eray run --task "@task.md" [--max-rounds N] [--model ...] ...
+    exec lh-harness-eray run --no-dashboard "$@"
     ;;
   doctor|init|plugin|check-update)
-    exec lh-harness "$cmd" "$@"
+    exec lh-harness-eray "$cmd" "$@"
     ;;
   test)
     cd /app/sdk && exec npm test
@@ -48,7 +48,7 @@ case "$cmd" in
     ;;
   help|*)
     cat <<'USAGE'
-LongHorizon-Harness (containerised). Usage: docker compose -f docker/docker-compose.yml run --rm harness <command>
+lh-harness-eray (containerised). Usage: docker compose -f docker/docker-compose.yml run --rm harness <command>
 
   web [opts]            serve the Web workbench on :8799 (needs LH_HARNESS_WEB_TOKEN)
   run --task @task.md   run one task headless in /work (the mounted workspace)
@@ -60,8 +60,10 @@ LongHorizon-Harness (containerised). Usage: docker compose -f docker/docker-comp
   shell                 bash inside the sandbox
 
 Runs live under /work/.lh-harness/runs/<run-id>/ on the bind mount.
-GUI subtasks: the image ships the Playwright MCP server with headless Chromium;
-executors and auditors can browse, click, type and screenshot web pages.
+The loop: prompt tailor -> planner (plan tree) -> per subtask: rubric -> composer <-> evaluator -> reply.
+Browser: the image ships the Playwright MCP server with headless Chromium; the planner,
+composer and evaluator can browse, click, type and screenshot web pages. ffmpeg/ffprobe,
+ImageMagick and python3 are available for media deliverables.
 USAGE
     ;;
 esac

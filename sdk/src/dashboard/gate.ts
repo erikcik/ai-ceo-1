@@ -1,20 +1,11 @@
-// Ported 1:1 from LongHorizon-Harness src/lh_harness/dashboard/gate.py
+// Single human-in-the-loop hook, called by the loop at its decision points:
+// after planning (open questions), after every subtask (done / blocked),
+// when the composer budget runs out, on repeated episode failures, and on
+// completion. The hook classifies the moment, raises a blocking approval the
+// workbench renders, and returns the operator's answer.
 //
-// Single human-in-the-loop hook, evaluated at the END of every round.
-//
-// The manager calls one hook per round with the round's ``outcome`` and
-// ``reached_max``. The hook classifies whether a human gate is needed and, if so,
-// raises a blocking approval dialog. Trigger conditions (see ``TRIGGERS``):
-//
-// 1. ``completed`` / ``max_rounds``: the run finished or hit the round budget.
-// 2. ``needs_human``: the round's output explicitly requires human intervention
-//    (manager reported blocked).
-// 3. ``repeated_failure``, a special condition: too many failing rounds in a row.
-//
-// Adding a new trigger = add one ``Trigger`` to ``TRIGGERS`` and one clause in
-// ``classify``; nothing else changes.
+// Adding a trigger = one `Trigger` in `TRIGGERS` and one clause in `classify`.
 
-import { ApprovalRules } from "./rules.js";
 import { Approval, ApprovalOption, DashboardState } from "./state.js";
 import { pyStrip } from "../utils/pystr.js";
 
@@ -38,7 +29,7 @@ interface Trigger {
   allow_extra_rounds: boolean;
 }
 
-const DEFAULT_INPUT_LABEL = "Optional: add instructions for the next manager round";
+const DEFAULT_INPUT_LABEL = "Optional: instructions for the next subtask (recorded in the decisions ledger)";
 
 function trigger(
   title: string,
@@ -57,53 +48,46 @@ function trigger(
 
 export const TRIGGERS: Record<string, Trigger> = {
   completed: trigger(
-    "Task complete. Continue the run?",
-    "The manager confirmed task completion. Continue to add rounds and inject instructions, or end this run.",
+    "Every subtask passed. Continue with a follow-up?",
+    "All plan leaves passed their evaluation and the reply is written. Add a follow-up and continue (the planner amends the plan), or end this run.",
     [CONTINUE, STOP_FINISH],
-    { allow_extra_rounds: true },
+    { allow_extra_rounds: true, input_label: "Optional follow-up instructions (turned into new subtasks)" },
   ),
   max_rounds: trigger(
-    "Round limit reached. Continue the run?",
-    "The configured round budget is exhausted before completion. Continue to add rounds, or end this run.",
+    "Composer budget exhausted. Continue the run?",
+    "The configured number of composer episodes is used up before every subtask passed. Grant more episodes and continue, or end this run.",
     [CONTINUE, STOP_FINISH],
     { allow_extra_rounds: true },
   ),
   needs_input: trigger(
-    "Manager needs your decision",
-    "The manager needs your decision or input before it can continue. Answer below and continue, or stop this run.",
+    "The planner has questions for you",
+    "Answer below and continue; the answers go into the decisions ledger every role reads. Or stop this run.",
     [CONTINUE, STOP_ABORT],
-    { input_label: "Your answer, injected into the next manager round" },
+    { input_label: "Your answers (numbered like the questions)" },
   ),
   needs_human: trigger(
-    "Task blocked; operator input required",
-    "The manager reported that it cannot proceed automatically. Add instructions and continue, or stop this run.",
+    "A subtask is blocked",
+    "The composer and evaluator could not reach PASS within the round budget. Add instructions and continue (the subtask is re-opened with fresh rounds), continue without instructions to move on, or stop this run.",
     [CONTINUE, STOP_ABORT],
+    { input_label: "Instructions for re-opening this subtask (leave empty to skip it)" },
   ),
   repeated_failure: trigger(
-    "Repeated failures require operator input",
-    "The manager produced invalid routes or rejected completions over several rounds and may be looping. Add instructions and continue, or stop this run.",
+    "Repeated episode failures",
+    "Several agent episodes in a row ended in errors, timeouts or unreadable verdicts. Add instructions and continue, or stop this run.",
     [CONTINUE, STOP_ABORT],
     { allow_extra_rounds: true },
   ),
 };
 
 /** Return ``[triggerKind, extraMessage]`` when a gate is needed, else null. */
-export function classify(
-  outcome: string,
-  reachedMax: boolean,
-  roundIndex: number,
-  rounds: Record<string, unknown>[],
-  rules: ApprovalRules,
-): [string, string] | null {
+export function classify(context: Record<string, unknown>): [string, string] | null {
+  const outcome = String(context.outcome || "progress");
+  const phase = String(context.phase || "");
   if (outcome === "completed") return ["completed", ""];
-  if (outcome === "ask") return ["needs_input", ""]; // extra_message filled from the manager question
-  // The hard round limit takes precedence over a generic blocked/failure
-  // outcome on the same final round, so the operator is explicitly told that
-  // the configured budget was exhausted and can decide whether to extend it.
-  if (reachedMax) return ["max_rounds", ""];
-  if (outcome === "blocked") return ["needs_human", ""];
-  const reason = rules.evaluate(roundIndex, rounds); // repeated-failure streak, etc.
-  if (reason) return ["repeated_failure", reason];
+  if (outcome === "ask") return ["needs_input", ""];
+  if (context.reached_max) return ["max_rounds", ""];
+  if (outcome === "blocked") return ["needs_human", String(context.note || "")];
+  if (phase === "repeated_failure") return ["repeated_failure", String(context.detail || "")];
   return null;
 }
 
@@ -119,14 +103,12 @@ function sleep(seconds: number): Promise<void> {
 }
 
 export interface MakeHumanHookOptions {
-  rules?: ApprovalRules | null;
   pollInterval?: number;
   defaultExtraRounds?: number;
 }
 
 /** Build the unified end-of-round human-in-the-loop hook for the dashboard. */
 export function makeHumanHook(state: DashboardState, options: MakeHumanHookOptions = {}): HumanHook {
-  const rules = options.rules ?? new ApprovalRules();
   const pollInterval = options.pollInterval ?? 0.5;
   const defaultExtraRounds = options.defaultExtraRounds ?? 0;
 
@@ -141,31 +123,23 @@ export function makeHumanHook(state: DashboardState, options: MakeHumanHookOptio
   return async function hook(context: Record<string, unknown>): Promise<Record<string, unknown>> {
     // Free-form operator notes queued from the UI are always carried forward.
     const injections = state.drainInjections().filter((text) => pyStrip(text));
-
-    const outcome = String(context.outcome || "progress");
-    const reachedMax = Boolean(context.reached_max);
-    const roundIndexValue = context.round_index;
-    const roundIndex =
-      typeof roundIndexValue === "number" ? Math.trunc(roundIndexValue) : Number.parseInt(String(roundIndexValue ?? 0), 10) || 0;
-    const rounds = (Array.isArray(context.rounds) ? context.rounds : []) as Record<string, unknown>[];
-
-    const classified = classify(outcome, reachedMax, roundIndex, rounds, rules);
+    const classified = classify(context);
     if (classified === null) {
-      // No blocking gate this round; just pass queued injections forward.
       return { action: "continue", instructions: injections.join("\n") };
     }
-
     const [kind, extraMessage] = classified;
     const spec = TRIGGERS[kind];
-    // For an "ask" gate, show the manager's actual question prominently and
-    // offer its quick-answer choices (e.g. Yes/No) as one-click buttons.
     const question = pyStrip(String(context.question || ""));
     const rawAnswers = kind === "needs_input" ? context.answers : null;
     const answers = Array.isArray(rawAnswers) ? rawAnswers.map((item) => String(item)) : [];
-    const message =
-      kind === "needs_input" && question
-        ? `${spec.message}\n\nManager question:\n${question}`
-        : extraMessage || spec.message;
+    const subtask = context.subtask_id ? `${context.subtask_id}${context.subtask_title ? ` — ${context.subtask_title}` : ""}` : "";
+    let message = spec.message;
+    if (kind === "needs_input" && question) message = `${spec.message}\n\nQuestions:\n${question}`;
+    else if (extraMessage) message = `${spec.message}\n\n${extraMessage}`;
+    if (subtask) message = `${message}\n\nSubtask: ${subtask}`;
+    const roundIndexValue = context.round_index;
+    const roundIndex =
+      typeof roundIndexValue === "number" ? Math.trunc(roundIndexValue) : Number.parseInt(String(roundIndexValue ?? 0), 10) || 0;
     const approval = state.createApproval({
       title: spec.title,
       message,
@@ -174,31 +148,25 @@ export function makeHumanHook(state: DashboardState, options: MakeHumanHookOptio
       input_label: spec.input_label,
       allow_extra_rounds: spec.allow_extra_rounds,
       context: {
-        phase: "end_of_round",
+        phase: String(context.phase || ""),
         trigger: kind,
-        outcome,
+        outcome: String(context.outcome || ""),
         round_index: roundIndex,
+        subtask_id: context.subtask_id ?? null,
+        subtask_title: context.subtask_title ?? null,
         question,
-        // Kept separate from `message`: clients localize the dialog from
-        // `trigger`, which would otherwise discard this rule detail.
         detail: extraMessage,
         task: context.task ?? "",
-        task_state: context.task_state ?? "",
-        // The reply is written before this gate so the operator decides
-        // against the actual answer; report.json does not exist yet.
         final_response: context.final_response ?? "",
-        round_count: rounds.length,
+        plan_status: context.plan_status ?? null,
       },
     });
     const resolved = await waitResolved(approval.approval_id);
     const parts = [...injections];
     if (pyStrip(resolved.user_input)) parts.push(pyStrip(resolved.user_input));
     return {
-      action: resolved.action, // "continue" | "stop"
+      action: resolved.action,
       instructions: parts.join("\n"),
-      // The operator's own choice wins; 0 falls back to the caller's default,
-      // which in turn falls back to the manager's configured budget.  Without
-      // this the dialog's round input was ignored.
       extra_rounds: resolved.extra_rounds || defaultExtraRounds,
       reason: resolved.reason,
     };

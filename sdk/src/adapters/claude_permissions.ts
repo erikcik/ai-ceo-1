@@ -14,16 +14,16 @@ import os from "node:os";
 import path from "node:path";
 
 export type ClaudeRole =
-  | "manager"
-  | "gui_executor"
-  | "cli_executor"
-  | "gui_auditor"
-  | "cli_auditor"
-  | "auditor_format_repair"
+  | "prompt_tailor"
+  | "planner"
+  | "rubric"
+  | "composer"
+  | "evaluator"
   | "final_response";
 
 const WRITE_TOOLS = ["Write", "Edit", "NotebookEdit"] as const;
-const AUDITOR_ROLES = new Set(["gui_auditor", "cli_auditor", "auditor_format_repair"]);
+/** Roles whose episodes run under the workspace snapshot guard (read-only by contract). */
+const GUARDED_ROLES = new Set(["evaluator"]);
 
 export type ClaudeRolePolicy = {
   role: ClaudeRole;
@@ -31,50 +31,78 @@ export type ClaudeRolePolicy = {
   disallowed_tools: readonly string[];
   load_computer_mcp: boolean;
   workspace_read_only: boolean;
+  /** The role may spawn the harness-defined subagents (Agent tool). */
+  subagents: boolean;
 };
 
 /**
  * Return the role deny-list used with Claude's unrestricted mode.
  *
  * Claude's interactive approval system and native sandbox are deliberately
- * bypassed.  The remaining deny-list expresses harness role separation, not
- * a filesystem or process sandbox.
+ * bypassed. The deny-list expresses role separation; finer write scopes are
+ * enforced by the loop's hooks (see loop/hooks.ts), not here.
  */
 export function policyForRole(role: string): ClaudeRolePolicy {
-  if (role === "manager" || role === "final_response") {
-    // The reply role only rewrites evidence it is given, so it needs no tools
-    // at all; it shares the manager's no-side-effect deny list.
+  if (role === "prompt_tailor" || role === "final_response") {
+    // Reads a few files, writes prose the harness stores. No side effects.
     return {
       role,
       permission_mode: "bypassPermissions",
-      disallowed_tools: ["Bash", ...WRITE_TOOLS, "Agent", "mcp__*"],
+      disallowed_tools: ["Bash", ...WRITE_TOOLS, "Agent", "mcp__*", "WebSearch", "WebFetch"],
       load_computer_mcp: false,
       workspace_read_only: true,
+      subagents: false,
     };
   }
-  if (role === "gui_executor" || role === "cli_executor") {
+  if (role === "planner") {
+    // Inspects the workspace and attachments, researches, writes plan/research
+    // notes (write scope hook-limited to the state dir + memory).
     return {
       role,
       permission_mode: "bypassPermissions",
-      disallowed_tools: ["Agent"],
+      disallowed_tools: [],
       load_computer_mcp: true,
       workspace_read_only: false,
+      subagents: true,
     };
   }
-  if (AUDITOR_ROLES.has(role)) {
+  if (role === "rubric") {
     return {
-      role: role as ClaudeRole,
+      role,
       permission_mode: "bypassPermissions",
-      disallowed_tools: [...WRITE_TOOLS, "Agent"],
+      disallowed_tools: ["Bash", "mcp__*"],
+      load_computer_mcp: false,
+      workspace_read_only: false,
+      subagents: true,
+    };
+  }
+  if (role === "composer") {
+    return {
+      role,
+      permission_mode: "bypassPermissions",
+      disallowed_tools: [],
+      load_computer_mcp: true,
+      workspace_read_only: false,
+      subagents: true,
+    };
+  }
+  if (role === "evaluator") {
+    // Verifies with every tool a reviewer would use; writes only memory pages
+    // (hook-limited) and is checked by the workspace snapshot guard.
+    return {
+      role,
+      permission_mode: "bypassPermissions",
+      disallowed_tools: [],
       load_computer_mcp: true,
       workspace_read_only: true,
+      subagents: true,
     };
   }
   throw new Error(`Unknown Claude Code role: ${role}`);
 }
 
 export function isAuditorRole(role: string): boolean {
-  return AUDITOR_ROLES.has(role);
+  return GUARDED_ROLES.has(role);
 }
 
 /**

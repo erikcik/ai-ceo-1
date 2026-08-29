@@ -1,4 +1,4 @@
-import type { EventEnvelope, OperatorMessage, Snapshot } from './types';
+import type { EventEnvelope, LoopSnapshot, OperatorMessage, Snapshot } from './types';
 import { dedupeEvents, eventKey } from './events';
 
 /** Connection state exposed by the run feed to Web consumers. */
@@ -109,43 +109,26 @@ function mergeRecordPreserving(current: Record<string, unknown> | undefined, inc
   return merged;
 }
 
-function mergeStatusObject(current: unknown, incoming: unknown): unknown {
-  if (!current || typeof current !== 'object') return incoming;
-  if (!incoming || typeof incoming !== 'object') return current;
-  const left = current as Record<string, unknown>;
-  const right = incoming as Record<string, unknown>;
-  const leftStatus = String(left.status || '').trim().toLowerCase();
-  const rightStatus = String(right.status || '').trim().toLowerCase();
-  const terminalStatus = (status: string) => ['completed', 'complete', 'success', 'succeeded', 'done', 'finished', 'failed', 'failure', 'blocked', 'incomplete', 'cancelled', 'canceled', 'stopped', 'aborted'].includes(status);
-  // A durable terminal role result must not be replaced by a late REST
-  // placeholder that only carries `running` or no status at all.
-  if (terminalStatus(leftStatus) && !terminalStatus(rightStatus)) {
-    return { ...right, ...left };
-  }
-  const merged: Record<string, unknown> = { ...left, ...right };
-  for (const [key, value] of Object.entries(left)) {
-    if (!meaningful(right[key]) && meaningful(value)) merged[key] = value;
-  }
-  return merged;
+/**
+ * How much loop state a frame carries.
+ *
+ * The loop projection is rebuilt from disk on every snapshot, so it replaces
+ * wholesale rather than being merged field by field. The one thing that must
+ * not happen is a frame that has not yet read `plan.json` (an empty `loop`)
+ * blanking a graph the operator is already looking at.
+ */
+function loopWeight(loop: LoopSnapshot | undefined | null): number {
+  if (!loop || typeof loop !== 'object') return 0;
+  const planNodes = Array.isArray(loop.plan?.nodes) ? loop.plan!.nodes.length : 0;
+  const subtasks = Array.isArray(loop.subtasks) ? loop.subtasks.length : 0;
+  const episodes = Array.isArray(loop.episodes) ? loop.episodes.length : 0;
+  if (planNodes) return 3;
+  if (subtasks || episodes) return 2;
+  return loop.phase || loop.task ? 1 : 0;
 }
 
-function mergeRound(current: Snapshot['rounds'][number] | undefined, incoming: Snapshot['rounds'][number]): Snapshot['rounds'][number] {
-  if (!current) return incoming;
-  const merged = { ...current, ...incoming };
-  for (const key of ['next_step', 'plan_text', 'task_state', 'task_contract', 'executor_output', 'auditor_report', 'harness_feedback', 'final_response', 'active_role'] as const) {
-    if (!meaningful(incoming[key]) && meaningful(current[key])) (merged as Record<string, unknown>)[key] = current[key];
-  }
-  if (current.in_progress === false && incoming.in_progress !== false) merged.in_progress = false;
-  merged.roles = Array.from(new Set([...(current.roles || []), ...(incoming.roles || [])]));
-  merged.role_sizes = { ...(current.role_sizes || {}) };
-  for (const [role, size] of Object.entries(incoming.role_sizes || {})) {
-    const previous = merged.role_sizes[role];
-    merged.role_sizes[role] = typeof previous === 'number' && typeof size === 'number' ? Math.max(previous, size) : size;
-  }
-  for (const key of ['manager_status', 'executor_status', 'auditor_status', 'final_response_status'] as const) {
-    merged[key] = mergeStatusObject(current[key], incoming[key]) as typeof merged[typeof key];
-  }
-  return merged;
+function preferLoop(current: Snapshot, incoming: Snapshot): LoopSnapshot {
+  return loopWeight(incoming.loop) >= loopWeight(current.loop) ? incoming.loop : current.loop;
 }
 
 function mergeApprovals(current: Snapshot['approvals'], incoming: Snapshot['approvals']): Snapshot['approvals'] {
@@ -196,13 +179,14 @@ function mergeOperatorMessages(
 function withDurableInteractions(preferred: Snapshot, other: Snapshot): Snapshot {
   return {
     ...preferred,
+    loop: preferLoop(other, preferred),
     approvals: mergeApprovals(other.approvals || [], preferred.approvals || []),
     operator_messages: mergeOperatorMessages(other.operator_messages || [], preferred.operator_messages || []),
   };
 }
 
 /** Merge same-cursor snapshots without allowing REST placeholders to erase
- * durable role output, completion state, or approval decisions. */
+ * durable loop state, completion state, or approval decisions. */
 function mergeEqualCursorSnapshot(current: Snapshot, incoming: Snapshot): Snapshot {
   const run = { ...incoming.run };
   // A new generation supersedes the previous one outright: keeping its rank or
@@ -210,17 +194,12 @@ function mergeEqualCursorSnapshot(current: Snapshot, incoming: Snapshot): Snapsh
   const resumed = epochOf(incoming) > epochOf(current);
   if (!resumed && lifecycleRank(current.run.status) > lifecycleRank(incoming.run.status)) run.status = current.run.status;
   const carried = resumed
-    ? (['agent', 'model', 'workspace', 'max_rounds', 'prompt_language'] as const)
-    : (['started_at', 'finished_at', 'completion_satisfied', 'completion_authority', 'report_status', 'exit_code', 'failure_reason', 'final_response', 'agent', 'model', 'workspace', 'max_rounds', 'prompt_language'] as const);
+    ? (['agent', 'model', 'workspace', 'max_rounds', 'prompt_language', 'role_configs'] as const)
+    : (['started_at', 'finished_at', 'completion_satisfied', 'completion_authority', 'report_status', 'exit_code', 'failure_reason', 'final_response', 'cost_usd', 'rounds_run', 'agent', 'model', 'workspace', 'max_rounds', 'prompt_language', 'role_configs'] as const);
   for (const key of carried) {
     if (!meaningful(incoming.run[key]) && meaningful(current.run[key])) (run as Record<string, unknown>)[key] = current.run[key];
   }
-  const roundsByIndex = new Map(current.rounds.map((round) => [round.round_index, round]));
-  const rounds = incoming.rounds.map((round) => mergeRound(roundsByIndex.get(round.round_index), round));
-  const incomingRoundIds = new Set(incoming.rounds.map((round) => round.round_index));
-  for (const round of current.rounds) if (!incomingRoundIds.has(round.round_index)) rounds.push(round);
-  rounds.sort((left, right) => left.round_index - right.round_index);
-  const activeRound = incoming.active_round ?? (terminal(incoming.run.status) ? null : current.active_round);
+  const activeSubtask = incoming.active_subtask ?? (terminal(incoming.run.status) ? null : current.active_subtask);
   const activeRole = incoming.active_role || (terminal(incoming.run.status) ? null : current.active_role);
   const currentMission = current.mission as unknown as Record<string, unknown>;
   const incomingMission = incoming.mission as unknown as Record<string, unknown>;
@@ -235,8 +214,8 @@ function mergeEqualCursorSnapshot(current: Snapshot, incoming: Snapshot): Snapsh
     ...incoming,
     run,
     mission: mergeRecordPreserving(currentMission, incomingMission) as Snapshot['mission'],
-    rounds,
-    active_round: activeRound,
+    loop: preferLoop(current, incoming),
+    active_subtask: activeSubtask,
     active_role: activeRole,
     approvals: mergeApprovals(current.approvals, incoming.approvals),
     operator_messages: mergeOperatorMessages(current.operator_messages || [], incoming.operator_messages || []),
@@ -306,8 +285,8 @@ function preferSnapshot(current: Snapshot | null, incoming: Snapshot): Snapshot 
   if (incomingTime < currentTime) return withDurableInteractions(current, incoming);
   // ``event_count`` is not a freshness counter: the server intentionally
   // retains only its last 200 records while a client may buffer 400.  Equal
-  // timestamps therefore remain eligible to update durable fields such as
-  // rounds, approvals, and lifecycle overlays.
+  // timestamps therefore remain eligible to update durable fields such as the
+  // loop projection, approvals, and lifecycle overlays.
   return withDurableInteractions(incoming, current);
 }
 
@@ -402,19 +381,6 @@ export function reduceRunFeed(state: RunFeedState, action: RunFeedAction): RunFe
 
   const { snapshot } = action;
   if (!sameRun(state.runId, snapshot)) return state;
-
-  if (action.type === 'snapshot') {
-    const resetHistory = snapshot.diagnostics?.resync_required === true || snapshot.diagnostics?.cursor_gap === true;
-    const events = boundedEvents([...(resetHistory ? [] : state.events), ...eventsForRun(snapshot.events, state.runId as string)], state.maxEvents);
-    const cursor = cursorFor(events, state.lastEventId || snapshot.diagnostics.last_event_id);
-    const merged = snapshotWithEvents(preferSnapshot(state.snapshot, snapshot), events, cursor);
-    return {
-      ...state,
-      snapshot: merged,
-      events,
-      lastEventId: cursor,
-    };
-  }
 
   // A seed is intentionally the same merge operation as a snapshot update:
   // a REST response can race with replayed WebSocket events.

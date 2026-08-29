@@ -1,11 +1,21 @@
-export type PanelName = 'details' | 'events' | 'artifacts' | 'trajectory';
+export type PanelName = 'events' | 'trajectory' | 'briefings' | 'research' | 'revisions';
+
+export const PANEL_NAMES: readonly PanelName[] = ['events', 'trajectory', 'briefings', 'research', 'revisions'];
+
+export const PANEL_LABELS: Record<PanelName, string> = {
+  events: 'Events',
+  trajectory: 'Trajectory',
+  briefings: 'Briefings',
+  research: 'Research',
+  revisions: 'Plan revisions',
+};
 
 export interface PanelState {
   open: boolean;
   panel: PanelName;
 }
 
-export const DEFAULT_PANEL_STATE: PanelState = { open: false, panel: 'details' };
+export const DEFAULT_PANEL_STATE: PanelState = { open: false, panel: 'events' };
 
 export type PanelAction =
   | { type: 'open'; panel: PanelName }

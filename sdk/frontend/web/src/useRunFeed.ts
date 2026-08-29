@@ -4,16 +4,17 @@ import {
   reduceRunFeed,
   type FeedConnectionStatus,
 } from '../../core/src/runFeed';
+import { EMPTY_LOOP } from '../../core/src/loopView';
 import type { OperatorMessage, Snapshot } from '../../core/src/types';
 import { fetchEvents, fetchSnapshot, isNotFound, isUnauthorized, streamRun } from './api';
 import { useUiLanguage } from './i18n';
 
 export const EMPTY_SNAPSHOT: Snapshot = {
-  schema_version: 1,
+  schema_version: 2,
   run: { id: '', status: 'idle', log_dir: '' },
-  mission: { task: '', contract_path: '', plan_path: '', verified_state_path: '', report_path: '' },
-  rounds: [],
-  active_round: null,
+  mission: { task: '', plan_path: 'plan/plan.json', report_path: 'report.json' },
+  loop: EMPTY_LOOP,
+  active_subtask: null,
   active_role: null,
   events: [],
   approvals: [],

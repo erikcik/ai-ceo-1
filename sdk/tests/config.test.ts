@@ -52,18 +52,24 @@ test("the init template parses back into the documented defaults", () => {
   assert.deepEqual(defaults, {
     model: "claude-opus-5",
     runs_root: "./.lh-harness/runs",
+    research_model: "sonnet",
     agent: "claude_code",
     env: "local",
     prompt_language: "en",
     max_rounds: 25,
+    max_eval_rounds: 3,
+    min_research_agents: 10,
+    episode_budget_usd: 0,
     dashboard: true,
     dashboard_port: 0,
     mcp_add_dir: [],
     guard_exclude_path: [],
-    manager_timeout: 900,
-    gui_executor_timeout: 1800,
-    cli_executor_timeout: 1800,
-    auditor_timeout: 900,
+    prompt_tailor_timeout: 900,
+    planner_timeout: 3600,
+    rubric_timeout: 1800,
+    composer_timeout: 3600,
+    evaluator_timeout: 3600,
+    final_response_timeout: 900,
   });
 });
 
@@ -72,7 +78,13 @@ test("the template only names the backend this port wires", () => {
   assert.ok(CONFIG_TEMPLATE.includes('model = "claude-opus-5"'));
   assert.ok(!CONFIG_TEMPLATE.includes('agent = "codex"'));
   assert.ok(!CONFIG_TEMPLATE.includes('model = "gpt-5.6-sol"'));
-  assert.ok(CONFIG_TEMPLATE.includes("only Claude Code is wired in this port"));
+  assert.ok(!CONFIG_TEMPLATE.toLowerCase().includes("codex"));
+  // The template documents the loop this port actually runs.
+  assert.ok(
+    CONFIG_TEMPLATE.includes(
+      "# The loop: planner -> (rubric -> composer <-> evaluator) per subtask -> reply.",
+    ),
+  );
 });
 
 test("init writes the template and refuses to clobber it without force", () => {
@@ -96,12 +108,12 @@ test("roles, timeouts and list options are flattened onto argparse dests", () =>
       'reasoning_effort = "high"',
       "mcp_add_dirs = [\"/a\", \"/b\"]",
       'guard_exclude_paths = ["target"]',
-      "[run.roles.manager]",
+      "[run.roles.planner]",
       'agent = "claude_code"',
       'model = "claude-opus-5"',
       'reasoning_effort = "xhigh"',
       "[run.timeouts]",
-      "manager = 42",
+      "planner = 42",
       "",
     ].join("\n"),
   );
@@ -111,10 +123,10 @@ test("roles, timeouts and list options are flattened onto argparse dests", () =>
     reasoning_effort: "high",
     mcp_add_dir: ["/a", "/b"],
     guard_exclude_path: ["target"],
-    manager_agent: "claude_code",
-    manager_model: "claude-opus-5",
-    manager_reasoning_effort: "xhigh",
-    manager_timeout: 42,
+    planner_agent: "claude_code",
+    planner_model: "claude-opus-5",
+    planner_reasoning_effort: "xhigh",
+    planner_timeout: 42,
   });
 });
 
@@ -166,24 +178,24 @@ test("every validation error message is verbatim", () => {
   );
   assert.equal(failure("[run]\nroles = 3\n"), "[run.roles] must be a TOML table");
   assert.equal(failure("[run.roles.nope]\n"), "unknown role(s): nope");
-  assert.equal(failure("[run.roles]\nmanager = 3\n"), "[run.roles.manager] must be a TOML table");
+  assert.equal(failure("[run.roles]\nplanner = 3\n"), "[run.roles.planner] must be a TOML table");
   assert.equal(
-    failure("[run.roles.manager]\nnope = 1\n"),
-    "unknown [run.roles.manager] key(s): nope",
+    failure("[run.roles.planner]\nnope = 1\n"),
+    "unknown [run.roles.planner] key(s): nope",
   );
   assert.equal(
-    failure('[run.roles.manager]\nagent = "opencode"\n'),
-    "run.roles.manager.agent must be one of: claude_code",
+    failure('[run.roles.planner]\nagent = "opencode"\n'),
+    "run.roles.planner.agent must be one of: claude_code",
   );
   assert.equal(
-    failure("[run.roles.manager]\nmodel = 1\n"),
-    "run.roles.manager.model must be a non-empty string",
+    failure("[run.roles.planner]\nmodel = 1\n"),
+    "run.roles.planner.model must be a non-empty string",
   );
   assert.equal(
-    failure('[run.roles.manager]\nreasoning_effort = "a\\"b"\n'),
-    "run.roles.manager.reasoning_effort: reasoning effort may only contain letters, digits, '.', '_', ':' or '-' and must be at most 64 characters",
+    failure('[run.roles.planner]\nreasoning_effort = "a\\"b"\n'),
+    "run.roles.planner.reasoning_effort: reasoning effort may only contain letters, digits, '.', '_', ':' or '-' and must be at most 64 characters",
   );
   assert.equal(failure("[run]\ntimeouts = 3\n"), "[run.timeouts] must be a TOML table");
-  assert.equal(failure("[run.timeouts]\nfinal_response = 5\n"), "unknown timeout role(s): final_response");
-  assert.equal(failure("[run.timeouts]\nmanager = 0\n"), "run.timeouts.manager must be an integer of at least 1");
+  assert.equal(failure("[run.timeouts]\nmanager = 5\n"), "unknown timeout role(s): manager");
+  assert.equal(failure("[run.timeouts]\nplanner = 0\n"), "run.timeouts.planner must be an integer of at least 1");
 });

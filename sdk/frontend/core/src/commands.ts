@@ -1,6 +1,8 @@
-import { MAX_ROUNDS, type Snapshot } from './types';
+import { MAX_ROUNDS, type LoopRole, type Snapshot } from './types';
 
 const STOPPING_STATUSES = new Set(['stopping', 'aborting', 'stop_requested', 'abort_requested']);
+
+const ROLES: readonly LoopRole[] = ['planner', 'composer', 'evaluator'];
 
 export type CommandName =
   | 'help'
@@ -14,8 +16,10 @@ export type CommandName =
   | 'resume'
   | 'details'
   | 'events'
-  | 'artifacts'
-  | 'trajectory';
+  | 'trajectory'
+  | 'briefings'
+  | 'research'
+  | 'revisions';
 
 export interface CommandDefinition {
   name: CommandName;
@@ -29,17 +33,19 @@ export interface CommandDefinition {
 export const COMMAND_CATALOG: readonly CommandDefinition[] = [
   { name: 'help', description: 'Show available commands' },
   { name: 'runs', description: 'List runs' },
-  { name: 'new', args: '<task> [--language en] [--manager-agent id] [--manager-model id] [--executor-agent id] [--executor-model id] [--auditor-agent id] [--auditor-model id] [--rounds n]', description: 'Start a new run', capability: 'create_run' },
+  { name: 'new', args: '<task> [--planner-agent id] [--planner-model id] [--composer-agent id] [--composer-model id] [--evaluator-agent id] [--evaluator-model id] [--rounds n]', description: 'Start a new run', capability: 'create_run' },
   { name: 'attach', args: '<run_id>', description: 'Switch to a run' },
   { name: 'inject', args: '<text>', description: 'Queue an instruction', capability: 'injections', requiresRun: true },
   { name: 'approve', args: '<approval_id> <action>', description: 'Resolve an approval', capability: 'approvals', requiresRun: true },
   { name: 'stop', description: 'Request a graceful stop', capability: 'stop', requiresRun: true },
   { name: 'abort', description: 'Abort the active run', capability: 'abort', requiresRun: true },
-  { name: 'resume', description: 'Continue a stopped run from its recorded rounds', capability: 'resume', requiresRun: true },
-  { name: 'details', description: 'Open run details', requiresRun: true },
+  { name: 'resume', description: 'Continue a stopped run from its recorded plan', capability: 'resume', requiresRun: true },
+  { name: 'details', description: 'Open the details drawer', requiresRun: true },
   { name: 'events', description: 'Open the event panel', requiresRun: true },
-  { name: 'artifacts', description: 'Open the artifact panel', requiresRun: true },
   { name: 'trajectory', description: 'Open the trajectory panel', requiresRun: true },
+  { name: 'briefings', description: 'Open the tailored role briefings', requiresRun: true },
+  { name: 'research', description: 'Open the planner research notes', requiresRun: true },
+  { name: 'revisions', description: 'Open the plan revision history', requiresRun: true },
 ];
 
 export interface ParsedCommand {
@@ -53,9 +59,10 @@ export interface NewRunOptions {
   agent?: string;
   model?: string;
   workspace?: string;
+  /** Ceiling on composer episodes. */
   maxRounds?: number;
   promptLanguage?: 'en';
-  roles?: Partial<Record<'manager' | 'executor' | 'auditor', { agent?: string; model?: string; reasoning_effort?: string }>>;
+  roles?: Partial<Record<LoopRole, { agent?: string; model?: string; reasoning_effort?: string }>>;
   error?: string;
 }
 
@@ -76,6 +83,9 @@ export function normaliseMaxRounds(value: string | number | null | undefined, fa
   if (!Number.isSafeInteger(parsed)) return safeFallback;
   return Math.min(MAX_ROUNDS, Math.max(1, parsed));
 }
+
+const ROLE_FLAGS = ROLES.flatMap((role) => [`--${role}-agent`, `--${role}-model`, `--${role}-effort`] as const);
+const ROLE_FLAG_RE = /^--(planner|composer|evaluator)-(agent|model|effort)$/u;
 
 /**
  * Parse the optional flags accepted by the `/new` composer command.
@@ -111,12 +121,7 @@ export function parseNewRunArgs(args: readonly string[]): NewRunOptions {
     }
     if (parseFlags) {
       let handledValueFlag = false;
-      for (const flag of [
-        '--agent', '--model', '--workspace', '--effort',
-        '--manager-agent', '--manager-model', '--manager-effort',
-        '--executor-agent', '--executor-model', '--executor-effort',
-        '--auditor-agent', '--auditor-model', '--auditor-effort',
-      ] as const) {
+      for (const flag of ['--agent', '--model', '--workspace', '--effort', ...ROLE_FLAGS] as const) {
         const parsed = valueFor(token, flag, args[index + 1]);
         if (parsed.error) return { task: task.join(' ').trim(), error: parsed.error };
         if (parsed.value !== undefined) {
@@ -130,13 +135,13 @@ export function parseNewRunArgs(args: readonly string[]): NewRunOptions {
           else if (flag === '--workspace') workspace = parsed.value;
           else if (flag === '--effort') {
             // A global --effort applies to every role, matching --agent/--model.
-            for (const role of ['manager', 'executor', 'auditor'] as const) {
+            for (const role of ROLES) {
               roles[role] = { ...(roles[role] || {}), reasoning_effort: parsed.value };
             }
           } else {
-            const match = /^--(manager|executor|auditor)-(agent|model|effort)$/u.exec(flag);
+            const match = ROLE_FLAG_RE.exec(flag);
             if (match) {
-              const role = match[1] as 'manager' | 'executor' | 'auditor';
+              const role = match[1] as LoopRole;
               const field = match[2] === 'effort' ? 'reasoning_effort' : (match[2] as 'agent' | 'model');
               roles[role] = { ...(roles[role] || {}), [field]: parsed.value };
             }

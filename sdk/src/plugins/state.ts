@@ -5,7 +5,7 @@
 // Plugins are installed once per machine, never per project, so the state and
 // the generated MCP configs live under `~/.lh-harness/plugins/`. Each install
 // writes one config per agent in that agent's own format -- `.mcp.json` for
-// Claude Code -- so nothing is translated at run time. `lh-harness run` picks
+// Claude Code -- so nothing is translated at run time. `lh-harness-eray run` picks
 // the highest-priority installed plugin for the agent it is about to start and
 // passes that agent's own file along.
 //

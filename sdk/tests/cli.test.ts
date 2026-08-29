@@ -36,6 +36,7 @@ import {
   writeBootstrapFailure,
 } from "../src/cli.js";
 import { ControlBus } from "../src/supervisor/control_bus.js";
+import { DEFAULT_STATE_ROOT } from "../src/types.js";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const SDK_ROOT = path.dirname(HERE);
@@ -350,7 +351,7 @@ test("a bootstrap failure does not follow a role directory symlink", () => {
     string,
     unknown
   >;
-  assert.equal(report["schema_version"], 2);
+  assert.equal(report["schema_version"], 3);
   assert.equal(report["status"], "failed");
   assert.equal(report["abort_reason"], "worker_bootstrap_failure");
   assert.equal(report["completion_satisfied"], false);
@@ -563,14 +564,14 @@ test("an explicit role agent stops model inheritance at that boundary", () => {
   const configs = publicRoleConfigsFromArgs({
     agent: "claude_code",
     model: "custom-model",
-    manager_agent: "claude_code",
-    auditor_reasoning_effort: "high",
+    planner_agent: "claude_code",
+    evaluator_reasoning_effort: "high",
   });
 
   assert.deepEqual(configs, {
-    manager: { agent: "claude_code", model: "claude-opus-5" },
-    executor: { agent: "claude_code", model: "custom-model" },
-    auditor: { agent: "claude_code", model: "custom-model", reasoning_effort: "high" },
+    planner: { agent: "claude_code", model: "claude-opus-5" },
+    composer: { agent: "claude_code", model: "custom-model" },
+    evaluator: { agent: "claude_code", model: "custom-model", reasoning_effort: "high" },
   });
 });
 
@@ -715,30 +716,46 @@ test("the dashboard exits normally without a stop or keep request", async () => 
 
 test("progress lines match the console contract", () => {
   const out = captureStdout(() => {
-    printProgress("round_start", { round: 3, round_budget: 25 });
-    printProgress("role_start", { round: 3, role: "manager" });
-    printProgress("role_done", { round: 3, role: "manager", status: "done", duration_ms: 12_400, next_step: "cli" });
+    printProgress("run_start", { resumed: false });
+    printProgress("plan_written", { leaves: 4, questions: 1 });
+    printProgress("subtask_start", { subtask_id: "build-api", title: "Build the API" });
+    printProgress("rubric_written", { criteria: 6 });
+    printProgress("role_start", { role: "composer", subtask_id: "build-api", round: 1 });
     printProgress("role_done", {
-      round: 3,
-      role: "cli_auditor",
+      role: "composer",
+      subtask_id: "build-api",
+      round: 1,
       status: "done",
-      duration_ms: 41_200,
-      audit_status: "incomplete",
-      integrity_status: "clean",
-      contract_audit_status: "aligned",
+      duration_ms: 12_400,
+      cost_usd: 1.5,
     });
-    printProgress("role_start", { round: 3, role: "final_response" });
+    printProgress("evaluation", { verdict: "PASS", passes: 6, criteria: 6 });
+    printProgress("subtask_done", { subtask_id: "build-api", rounds: 1 });
+    printProgress("subtask_blocked", { subtask_id: "ship-it" });
+    printProgress("plan_revised", { revision: 2, applied: 1, rejected: 0 });
+    printProgress("role_start", { role: "final_response" });
   });
 
   assert.equal(
     out,
-    "\n── Round 3/25 ──\n" +
-      "  [manager] running...\n" +
-      "  [manager] done · 12.4s · next=cli\n" +
-      "  [cli_auditor] done · 41.2s · audit=incomplete/clean/aligned\n" +
+    "\n── Run started ──\n" +
+      "\n── Plan written: 4 subtasks, 1 question(s) for you ──\n" +
+      "\n── Subtask build-api: Build the API ──\n" +
+      "  contract: 6 criteria\n" +
+      "  [composer build-api r1] running...\n" +
+      "  [composer build-api r1] done · 12.4s · $1.50\n" +
+      "  verdict: PASS (6/6 criteria pass)\n" +
+      "  ✔ build-api done in 1 round(s)\n" +
+      "  ✖ ship-it blocked\n" +
+      "  plan revised (r2): 1 change(s) applied, 0 rejected\n" +
       "\n── Writing reply ──\n" +
       "  [final_response] running...\n",
   );
+});
+
+test("a resumed run says so", () => {
+  const out = captureStdout(() => printProgress("run_start", { resumed: true }));
+  assert.equal(out, "\n── Resuming run ──\n");
 });
 
 test("the run summary uses 72-character rules and the documented labels", () => {
@@ -746,14 +763,15 @@ test("the run summary uses 72-character rules and the documented labels", () => 
   const out = captureStdout(() => {
     printRunSummary(
       {
-        status: "complete",
+        status: "completed",
         rounds_run: 2,
         max_rounds: 25,
+        status_counts: { done: 3, blocked: 1, pending: 0, skipped: 0 },
         elapsed_seconds: 90,
+        cost_usd: 4.25,
         abort_reason: "",
+        state_dir: "/tmp/run/state",
         final_response: "all done",
-        current_task_state: "state",
-        latest_auditor_report: "audit",
       },
       { logDir, workspace: "/tmp/ws" },
     );
@@ -761,16 +779,28 @@ test("the run summary uses 72-character rules and the documented labels", () => 
 
   const lines = out.split("\n");
   assert.equal(lines[1], "=".repeat(72));
-  assert.equal(lines[2], "Result:    complete");
-  assert.equal(lines[3], "Rounds:    2/25");
-  assert.equal(lines[4], "Elapsed:   1.5 min");
-  assert.equal(lines[5], "Workspace: /tmp/ws");
-  assert.equal(lines[6], `Report:    ${path.join(logDir, "report.json")}`);
+  assert.equal(lines[2], "Result:    completed");
+  assert.equal(lines[3], "Composer:  2/25 episodes");
+  assert.equal(lines[4], "Subtasks:  3 done · 1 blocked · 0 pending · 0 skipped");
+  assert.equal(lines[5], "Elapsed:   1.5 min");
+  assert.equal(lines[6], "Cost:      $4.25");
+  assert.equal(lines[7], "Workspace: /tmp/ws");
+  assert.equal(lines[8], "State:     /tmp/run/state");
+  assert.equal(lines[9], `Report:    ${path.join(logDir, "report.json")}`);
   assert.ok(out.includes(`\n${"-".repeat(72)}\n  all done\n${"-".repeat(72)}\n`));
-  assert.ok(out.includes("\nTask state:\n  state\n"));
-  assert.ok(out.includes("\nFinal audit:\n  audit\n"));
   assert.ok(out.endsWith(`${"=".repeat(72)}\n`));
   assert.ok(!out.includes("Stopped:"));
+});
+
+test("an aborted run names the reason", () => {
+  const logDir = tmpRoot();
+  const out = captureStdout(() => {
+    printRunSummary(
+      { status: "incomplete", rounds_run: 25, max_rounds: 25, abort_reason: "round_budget_exhausted" },
+      { logDir, workspace: "/tmp/ws" },
+    );
+  });
+  assert.ok(out.includes("Stopped:   round_budget_exhausted"));
 });
 
 // --- argv parser -----------------------------------------------------------
@@ -783,7 +813,7 @@ test("the help formatter suppresses defaults that argparse would hide", () => {
 
   // A real default is printed…
   assert.ok(runHelp.includes("Agent implementation for every role. (default:"));
-  assert.ok(runHelp.includes("(default: 900)"));
+  assert.ok(runHelp.includes("(default: 3600)"));
   // …while `None`, `[]` and nargs==0 flags are not.
   assert.ok(!runHelp.includes("(default: None)"));
   assert.ok(!runHelp.includes("(default: True)"));
@@ -808,13 +838,13 @@ test("config defaults win over the hardcoded fallbacks", () => {
 test("--version prints the package version and exits 0", () => {
   const result = runCli(["-V"]);
   assert.equal(result.code, 0);
-  assert.equal(result.stdout, "lh-harness 0.1.7\n");
+  assert.equal(result.stdout, "lh-harness-eray 0.1.7\n");
 });
 
 test("no command prints help and exits 2", () => {
   const result = runCli([]);
   assert.equal(result.code, 2);
-  assert.ok(result.stdout.startsWith("usage: lh-harness [-h] [-V]\n"));
+  assert.ok(result.stdout.startsWith("usage: lh-harness-eray [-h] [-V]\n"));
   assert.ok(result.stdout.includes("LongHorizon-Harness 0.1.7"));
   assert.ok(result.stdout.includes("Homepage: https://github.com/AMAP-ML/LongHorizon-Harness"));
 });
@@ -892,7 +922,7 @@ test("--resume is refused outside a supervised worker", () => {
 test("plugin without a sub-action prints its help and exits 2", () => {
   const result = runCli(["plugin"]);
   assert.equal(result.code, 2);
-  assert.ok(result.stdout.startsWith("usage: lh-harness plugin [-h] {list,install,uninstall} ..."));
+  assert.ok(result.stdout.startsWith("usage: lh-harness-eray plugin [-h] {list,install,uninstall} ..."));
 });
 
 test("init writes the config template and refuses to clobber it", () => {
@@ -901,12 +931,12 @@ test("init writes the config template and refuses to clobber it", () => {
   assert.equal(first.code, 0);
   const configPath = path.join(base, ".lh-harness", "config.toml");
   assert.equal(first.stdout, `Created config: ${configPath}\n`);
-  assert.ok(fs.readFileSync(configPath, "utf-8").startsWith("# LongHorizon-Harness project defaults."));
+  assert.ok(fs.readFileSync(configPath, "utf-8").startsWith("# lh-harness-eray project defaults."));
 
   const second = runCli(["init"], base);
   assert.equal(second.code, 1);
   assert.ok(second.stderr.includes(`Config already exists: ${configPath}`));
-  assert.ok(second.stderr.includes("Use `lh-harness init --force` to replace it."));
+  assert.ok(second.stderr.includes("Use `lh-harness-eray init --force` to replace it."));
 
   const forced = runCli(["init", "--force"], base);
   assert.equal(forced.code, 0);
@@ -931,11 +961,11 @@ test("doctor reports every check and exits on failures only", () => {
 });
 
 test("the packaged bin entry point runs the CLI", () => {
-  const out = execFileSync(process.execPath, [path.join(SDK_ROOT, "bin", "lh-harness.mjs"), "-V"], {
+  const out = execFileSync(process.execPath, [path.join(SDK_ROOT, "bin", "lh-harness-eray.mjs"), "-V"], {
     cwd: SDK_ROOT,
     encoding: "utf-8",
   });
-  assert.equal(out, "lh-harness 0.1.7\n");
+  assert.equal(out, "lh-harness-eray 0.1.7\n");
 });
 
 test("a supervised worker's role configuration matches the reservation regardless of key order", () => {
@@ -1005,8 +1035,11 @@ test("start helpers: per-folder container names and a persistent web token", () 
 });
 
 test("start GUI preflight picks a launchable browser configuration", () => {
-  assert.deepEqual(guiBrowserArgs(true, true), ["--headless", "--isolated", "--no-sandbox"]);
-  assert.deepEqual(guiBrowserArgs(true, false), ["--headless", "--isolated", "--no-sandbox"]);
-  assert.deepEqual(guiBrowserArgs(false, true), ["--headless", "--isolated", "--browser", "chrome"]);
+  // Screenshots and console logs land outside the workspace so they cannot be
+  // mistaken for a composer mutation by the evaluator's snapshot guard.
+  const outputDir = ["--output-dir", path.join(DEFAULT_STATE_ROOT, "tmp", "playwright-mcp-output")];
+  assert.deepEqual(guiBrowserArgs(true, true), ["--headless", "--isolated", "--no-sandbox", ...outputDir]);
+  assert.deepEqual(guiBrowserArgs(true, false), ["--headless", "--isolated", "--no-sandbox", ...outputDir]);
+  assert.deepEqual(guiBrowserArgs(false, true), ["--headless", "--isolated", "--browser", "chrome", ...outputDir]);
   assert.equal(guiBrowserArgs(false, false), null);
 });

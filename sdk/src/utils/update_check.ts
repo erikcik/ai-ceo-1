@@ -3,8 +3,8 @@
 // The Python version polls PyPI; this port publishes to npm, so it reads the
 // npm registry's packument instead. Function names, result shape, timeouts and
 // message wording are unchanged apart from saying "npm" where they said "PyPI".
-export const NPM_PROJECT_URL = "https://www.npmjs.com/package/lh-harness";
-const _NPM_JSON_URL = "https://registry.npmjs.org/lh-harness";
+export const NPM_PROJECT_URL = "https://www.npmjs.com/package/lh-harness-eray";
+const _NPM_JSON_URL = "https://registry.npmjs.org/lh-harness-eray";
 const _MAX_RESPONSE_BYTES = 1024 * 1024;
 
 export type UpdateCheckStatus = "up_to_date" | "update_available" | "failed";
@@ -34,7 +34,7 @@ export async function checkForUpdate(
   const timer = setTimeout(() => controller.abort(), Math.max(0.1, timeout) * 1000);
   try {
     const response = await fetch(_NPM_JSON_URL, {
-      headers: { Accept: "application/json", "User-Agent": `lh-harness/${currentVersion}` },
+      headers: { Accept: "application/json", "User-Agent": `lh-harness-eray/${currentVersion}` },
       signal: controller.signal,
     });
     const raw = new Uint8Array(await response.arrayBuffer());

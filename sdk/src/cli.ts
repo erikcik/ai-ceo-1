@@ -40,9 +40,18 @@ import {
   EpisodeBudget,
   harnessConfig,
 } from "./types.js";
-import type { HarnessConfig, PromptLanguage } from "./types.js";
+import type { HarnessConfig, PromptLanguage, RoleName } from "./types.js";
 import { normaliseReasoningEffort } from "./agent_registry.js";
-import { SECRETS_FILE, capabilityStatus, discoverHostSecrets, parseEnvFile } from "./capabilities.js";
+import {
+  GRANTED_CAPABILITIES_ENV,
+  SECRETS_FILE,
+  capabilityPromptNote,
+  capabilityStatus,
+  deriveCapabilitiesFromEnv,
+  discoverHostSecrets,
+  parseEnvFile,
+  parseGrantedCapabilities,
+} from "./capabilities.js";
 import { probeAgentCli, which } from "./utils/agent_cli.js";
 import type { AgentAdapter } from "./adapters/base.js";
 import type { DashboardState } from "./dashboard/state.js";
@@ -83,14 +92,12 @@ const _PLUGIN_CHOICES: readonly string[] = ["open-computer-use", "clawdcursor", 
 // Each entry gets a matching `--<role>-agent` and `--<role>-model` flag;
 // resolution walks the fallback chain and ends at the global --agent / --model.
 const _ROLE_OPTIONS: readonly (readonly [string, string | null, string])[] = [
-  ["manager", null, "the scheduler role"],
-  ["executor", null, "both executor roles"],
-  ["gui_executor", "executor", "GUI/visual subtasks"],
-  ["cli_executor", "executor", "CLI/non-GUI subtasks"],
-  ["auditor", null, "both auditor roles"],
-  ["gui_auditor", "auditor", "GUI audit"],
-  ["cli_auditor", "auditor", "CLI audit"],
-  ["final_response", "manager", "the closing reply written for you"],
+  ["planner", null, "the planner (also the prompt tailor and the closing reply)"],
+  ["composer", null, "the composer, which does the work"],
+  ["evaluator", null, "the evaluator (also the rubric agent)"],
+  ["prompt_tailor", "planner", "the prompt tailor only"],
+  ["rubric", "evaluator", "the rubric agent only"],
+  ["final_response", "planner", "the closing reply written for you"],
 ];
 const _ROLE_PARENTS: Record<string, string | null> = Object.fromEntries(
   _ROLE_OPTIONS.map(([role, parent]) => [role, parent]),
@@ -99,13 +106,15 @@ const _ROLE_SCOPES: Record<string, string> = Object.fromEntries(
   _ROLE_OPTIONS.map(([role, , scope]) => [role, scope]),
 );
 
-// Per-role episode budgets as (dest prefix, timeout seconds). The
-// executors get the long task timeout; the scheduler and auditors get the short one.
+// Per-role episode budgets as (dest prefix, timeout seconds). The composer
+// gets the longest budget; research-heavy roles (planner, evaluator) follow.
 const _BUDGET_OPTIONS: readonly (readonly [string, number])[] = [
-  ["manager", 900],
-  ["gui_executor", 1800],
-  ["cli_executor", 1800],
-  ["auditor", 900],
+  ["prompt_tailor", 900],
+  ["planner", 3600],
+  ["rubric", 1800],
+  ["composer", 3600],
+  ["evaluator", 3600],
+  ["final_response", 900],
 ];
 
 // ---------------------------------------------------------------------------
@@ -1053,7 +1062,10 @@ export function adoptSupervisedRunDir(
       ? null
       : pyStrip(String(expectedModelRaw));
   const suppliedModel = typeof options.model === "string" ? pyStrip(options.model) : options.model ?? null;
-  if (expectedModel !== suppliedModel) {
+  // A reservation without a model means "follow the project/agent default";
+  // the worker then legitimately resolves that default from config.toml, so
+  // only a recorded model is cross-checked against argv.
+  if (expectedModel !== null && expectedModel !== suppliedModel) {
     throw new Error("supervised run model does not match its reservation");
   }
   const expectedRolesRaw = owner["role_configs"];
@@ -1166,13 +1178,13 @@ export function buildParser(runDefaults: Record<string, unknown>): {
     name in runDefaults ? runDefaults[name] : fallback;
 
   const parser = new ArgumentParser({
-    prog: "lh-harness",
+    prog: "lh-harness-eray",
     description: `LongHorizon-Harness ${VERSION}`,
     epilog: _EPILOG,
   });
   parser.addArgument(["-V", "--version"], {
     action: "version",
-    version: `lh-harness ${VERSION}`,
+    version: `lh-harness-eray ${VERSION}`,
     help: "show program's version number and exit",
   });
   parser.addSubparsers("command");
@@ -1241,7 +1253,7 @@ export function buildParser(runDefaults: Record<string, unknown>): {
     default: runDefault("workspace"),
     help:
       "Override the working directory the agents operate in. " +
-      "Defaults to the directory lh-harness was started from.",
+      "Defaults to the directory lh-harness-eray was started from.",
   });
   runParser.addArgument("--harness-dir", {
     default: runDefault("harness_dir"),
@@ -1263,7 +1275,7 @@ export function buildParser(runDefaults: Record<string, unknown>): {
   runParser.addArgument("--prompt-language", {
     choices: ["en", "zh"],
     default: runDefault("prompt_language", "en"),
-    help: "Language for manager/executor/auditor prompts.",
+    help: "Language for the role prompts.",
   });
   // One entry per agent, each in that agent's own format: no translation.
   runParser.addArgument("--claude-mcp-config", {
@@ -1300,7 +1312,34 @@ export function buildParser(runDefaults: Record<string, unknown>): {
   runParser.addArgument("--max-rounds", {
     type: _maxRounds,
     default: runDefault("max_rounds"),
-    help: `Maximum number of manage-execute-audit rounds (1-${MAX_ROUNDS}). If omitted, uses ${_DEFAULT_MAX_ROUNDS}.`,
+    help: `Maximum number of composer episodes in the run (1-${MAX_ROUNDS}). If omitted, uses ${_DEFAULT_MAX_ROUNDS}.`,
+  });
+  runParser.addArgument("--max-eval-rounds", {
+    default: runDefault("max_eval_rounds", 3),
+    type: (value: string) => Number.parseInt(value, 10),
+    help: "Composer/evaluator rounds per subtask before it is marked blocked.",
+  });
+  runParser.addArgument("--min-research-agents", {
+    default: runDefault("min_research_agents", 10),
+    type: (value: string) => Number.parseInt(value, 10),
+    help: "Minimum research subagents the planner, rubric agent and evaluator must spawn.",
+  });
+  runParser.addArgument("--research-model", {
+    default: runDefault("research_model", "sonnet"),
+    help: "Model alias for research subagents (sonnet keeps fan-out cheap).",
+  });
+  runParser.addArgument("--episode-budget-usd", {
+    default: runDefault("episode_budget_usd", 0),
+    type: (value: string) => Number.parseFloat(value),
+    help: "Dollar ceiling per agent episode (0 = provider default).",
+  });
+  runParser.addArgument("--sources-dir", {
+    default: runDefault("sources_dir"),
+    help: "Operator reference material folder; defaults to <workspace>/sources.",
+  });
+  runParser.addArgument("--memory-dir", {
+    default: runDefault("memory_dir"),
+    help: "Karpathy-style memory wiki folder; defaults to <workspace>/memory.",
   });
   for (const [role, timeout] of _BUDGET_OPTIONS) {
     const scope = _ROLE_SCOPES[role] as string;
@@ -1408,7 +1447,7 @@ export function buildParser(runDefaults: Record<string, unknown>): {
     if (action === "list") continue;
     subParser.addArgument("name", {
       choices: _PLUGIN_CHOICES,
-      help: "Plugin to set up. Run `lh-harness plugin list` for what each one provides.",
+      help: "Plugin to set up. Run `lh-harness-eray plugin list` for what each one provides.",
     });
     if (action === "install") {
       subParser.addArgument("--agent", {
@@ -1608,6 +1647,14 @@ async function _doctorCommand(): Promise<number> {
   if (pluginResult >= 1000) { failures += 1; warnings += pluginResult - 1000; }
   else warnings += pluginResult;
 
+  // Capability credentials: presence, host tooling, and a live API probe, so
+  // "ready" means a granted run can actually spend them. A rejected token is
+  // a warning, not a failure: capabilities are optional per task.
+  const secrets = syncSecretsFile();
+  for (const [key, value] of Object.entries(secrets)) if (!process.env[key]) process.env[key] = value;
+  _reportCapabilities(process.env, { checkHostTools: true });
+  warnings += await _verifyCapabilityCredentials(process.env);
+
   const updateResult = await updateCheck.result(3.0);
   warnings += _reportUpdateResult(updateResult) ? 1 : 0;
 
@@ -1629,7 +1676,7 @@ async function _doctorNodeToolchain(): Promise<number> {
     doctorLine(
       "WARN",
       "npm",
-      "not found on PATH; `lh-harness plugin install` needs Node.js 20+ (https://nodejs.org)",
+      "not found on PATH; `lh-harness-eray plugin install` needs Node.js 20+ (https://nodejs.org)",
     );
     warnings += 1;
   } else {
@@ -1659,7 +1706,7 @@ async function _doctorPluginState(): Promise<number> {
   const { PluginError } = await import("./plugins/errors.js");
   const { npmBinary } = await import("./plugins/npm.js");
 
-  const hint = (name: string): string => `run \`lh-harness plugin install ${name}\``;
+  const hint = (name: string): string => `run \`lh-harness-eray plugin install ${name}\``;
   let warnings = 0;
 
   if (!npmBinary()) {
@@ -2009,7 +2056,7 @@ function _initCommand(args: Namespace): number {
   } catch (exc) {
     if (_errno(exc) !== "EEXIST") throw exc;
     eprint(`Config already exists: ${path.resolve(_text(exc))}`);
-    eprint("Use `lh-harness init --force` to replace it.");
+    eprint("Use `lh-harness-eray init --force` to replace it.");
     return 1;
   }
   print(`Created config: ${path.resolve(target)}`);
@@ -2027,7 +2074,7 @@ async function _checkUpdateCommand(): Promise<number> {
 type UpdateResult = { status: string; current_version: string; latest_version: string } | null;
 
 function _reportUpdateResult(result: UpdateResult): boolean {
-  const projectUrl = "https://www.npmjs.com/package/lh-harness";
+  const projectUrl = "https://www.npmjs.com/package/lh-harness-eray";
   if (result === null || result.status === "failed") {
     doctorLine("WARN", "Update", `automatic update check failed; check manually: ${projectUrl}`);
     return true;
@@ -2067,7 +2114,7 @@ async function _loadWebServerRunner(): Promise<WebServerRunner> {
 function _brokenInstallMessage(exc: unknown): string {
   return (
     "Web dependencies are missing from this installation. " +
-    "Reinstall with `npm install -g lh-harness`. " +
+    "Reinstall with `npm install -g lh-harness-eray`. " +
     `(${_text(exc)})`
   );
 }
@@ -2114,7 +2161,8 @@ async function ensureHostServePreflight(): Promise<void> {
   } catch { /* no browser plugin: the per-run config simply omits it */ }
   const secrets = syncSecretsFile();
   for (const [key, value] of Object.entries(secrets)) if (!process.env[key]) process.env[key] = value;
-  _reportCapabilities(process.env);
+  _reportCapabilities(process.env, { checkHostTools: true });
+  await _verifyCapabilityCredentials(process.env);
 }
 
 async function _serveWebWorkbench(args: Namespace, runWebServer: WebServerRunner): Promise<number> {
@@ -2154,7 +2202,7 @@ async function _serveWebWorkbench(args: Namespace, runWebServer: WebServerRunner
       port,
       workspaceRoot: args["workspace_root"] as string,
       authToken,
-      // Set by `lh-harness start` (host wrapper) and by the container image:
+      // Set by `lh-harness-eray start` (host wrapper) and by the container image:
       // both know how to bring the service back after an exit-87 reload.
       reloadable: process.env["LH_HARNESS_ENABLE_RELOAD"] === "1",
     });
@@ -2315,7 +2363,7 @@ function _sleep(seconds: number): Promise<void> {
 }
 
 async function _runCommand(args: Namespace): Promise<number> {
-  // The agents work in the directory lh-harness was started from, so a task acts
+  // The agents work in the directory lh-harness-eray was started from, so a task acts
   // on the user's real project by default. Resolve it before touching the disk:
   // every other path below is relative to it.
   let workspace: string;
@@ -2453,13 +2501,18 @@ async function _runCommand(args: Namespace): Promise<number> {
   // The workspace is the user's own directory, so the run's bookkeeping may sit
   // inside it. Hide those paths from the agents and from the auditor read-only
   // guard, which would otherwise flag the harness's own writes.
+  // The run's `state/` folder is deliberately readable: plan, contracts,
+  // progress notes and evidence are the shared surface between the roles and
+  // the operator. Everything else in the run is harness-owned.
   const hiddenPaths = outermostPaths(
-    path.dirname(PROJECT_CONFIG_PATH),
-    runsRoot,
-    runDir,
+    path.join(runDir, "tmp"),
+    path.join(runDir, "control"),
+    path.join(runDir, "worker.log"),
     logDir,
     harnessDir,
     promptDir,
+    ...siblingRunDirs(runsRoot, runId),
+    path.join(path.dirname(PROJECT_CONFIG_PATH), "web-token"),
   );
 
   // Volatile workspace paths the read-only guard skips while snapshotting.
@@ -2494,16 +2547,45 @@ async function _runCommand(args: Namespace): Promise<number> {
     print(`Guard excludes: ${guardExcludePaths.join(", ")}`);
   }
 
+  // A supervised worker is told exactly what the operator granted; a direct
+  // run derives the effective set from the credentials present in its env.
+  // Role prompts announce these so agents use provisioned integrations
+  // instead of asking the user to paste tokens they already have.
+  const grantedCapabilities =
+    parseGrantedCapabilities(process.env[GRANTED_CAPABILITIES_ENV]) ?? deriveCapabilitiesFromEnv(process.env);
+  const sourcesDir = args["sources_dir"] ? _resolvePath(String(args["sources_dir"])) : path.join(workspace, "sources");
+  const memoryDir = args["memory_dir"] ? _resolvePath(String(args["memory_dir"])) : path.join(workspace, "memory");
+  // The evaluator's snapshot guard skips the run's own state, the memory wiki
+  // (roles may write pages) and browser residue, on top of the operator's list.
+  const effectiveGuardExcludes = [
+    ...guardExcludePaths,
+    path.dirname(_resolvePath(PROJECT_CONFIG_PATH)),
+    memoryDir,
+    path.join(workspace, ".playwright-mcp"),
+  ];
   const config: HarnessConfig = harnessConfig({
     max_total_episodes: maxRounds,
-    manager_budget: new EpisodeBudget(Number(args["manager_timeout"])),
-    gui_executor_budget: new EpisodeBudget(Number(args["gui_executor_timeout"])),
-    cli_executor_budget: new EpisodeBudget(Number(args["cli_executor_timeout"])),
-    auditor_budget: new EpisodeBudget(Number(args["auditor_timeout"])),
+    budgets: {
+      prompt_tailor: new EpisodeBudget(Number(args["prompt_tailor_timeout"])),
+      planner: new EpisodeBudget(Number(args["planner_timeout"])),
+      rubric: new EpisodeBudget(Number(args["rubric_timeout"])),
+      composer: new EpisodeBudget(Number(args["composer_timeout"])),
+      evaluator: new EpisodeBudget(Number(args["evaluator_timeout"])),
+      final_response: new EpisodeBudget(Number(args["final_response_timeout"])),
+    },
     workspace_path: workspace,
     harness_dir: harnessDir,
     log_dir: logDir,
+    sources_dir: sourcesDir,
+    memory_dir: memoryDir,
+    max_eval_rounds: Math.max(1, Number(args["max_eval_rounds"]) || 3),
+    min_research_agents: Math.max(0, Number(args["min_research_agents"]) || 0),
+    research_model: String(args["research_model"] || "sonnet"),
+    episode_budget_usd: Math.max(0, Number(args["episode_budget_usd"]) || 0),
     prompt_language: String(args["prompt_language"]) as PromptLanguage,
+    capability_note: capabilityPromptNote(grantedCapabilities, process.env),
+    capability_note_read_only: capabilityPromptNote(grantedCapabilities, process.env, { readOnly: true }),
+    guard_exclude_paths: effectiveGuardExcludes,
   });
   const env = await buildEnv(String(args["env"]), path.join(runDir, "tmp"));
 
@@ -2654,7 +2736,7 @@ async function _runCommand(args: Namespace): Promise<number> {
           mcpConfig: await resolveMcpConfig(name),
           mcpAddDirs: (args["mcp_add_dir"] as string[]) ?? null,
           hiddenPaths,
-          guardExcludePaths,
+          guardExcludePaths: effectiveGuardExcludes,
           reasoningEffort: effort,
         }),
       );
@@ -2662,19 +2744,15 @@ async function _runCommand(args: Namespace): Promise<number> {
     return agentCache.get(key) as AgentAdapter;
   };
 
-  let roleAgents: Record<string, AgentAdapter>;
+  let roleAgents: Record<RoleName, AgentAdapter>;
   try {
     roleAgents = {
-      managerAgent: await buildRoleAgent("manager"),
-      guiExecutorAgent: await buildRoleAgent("gui_executor"),
-      cliExecutorAgent: await buildRoleAgent("cli_executor"),
-      guiAuditorAgent: await buildRoleAgent("gui_auditor"),
-      cliAuditorAgent: await buildRoleAgent("cli_auditor"),
-      // Format repair sees only the previous auditor text and has no tools. It
-      // inherits the selected auditor backend/model, but never its audit
-      // permissions.
-      auditorFormatRepairAgent: await buildRoleAgent("auditor", "auditor_format_repair"),
-      finalResponseAgent: await buildRoleAgent("final_response"),
+      prompt_tailor: await buildRoleAgent("prompt_tailor"),
+      planner: await buildRoleAgent("planner"),
+      rubric: await buildRoleAgent("rubric"),
+      composer: await buildRoleAgent("composer"),
+      evaluator: await buildRoleAgent("evaluator"),
+      final_response: await buildRoleAgent("final_response"),
     };
   } catch (exc) {
     writeBootstrapFailure(logDir, task, exc, maxRounds);
@@ -2688,7 +2766,7 @@ async function _runCommand(args: Namespace): Promise<number> {
     return 1;
   }
 
-  const { run } = await import("./manager.js");
+  const { run } = await import("./loop/runner.js");
 
   const injectionSource = gateState;
   let report: Record<string, unknown> | null = null;
@@ -2699,13 +2777,15 @@ async function _runCommand(args: Namespace): Promise<number> {
           task,
           env,
           config,
+          runDir,
+          agents: roleAgents,
           humanHook,
           pendingInstructions:
             injectionSource !== null ? () => injectionSource.drainInjections() : null,
           progress: printProgress,
           resume: Boolean(args["resume"]),
           signal,
-          ...roleAgents,
+          hiddenPaths,
         }),
       { runDir, enabled: dashboardSupervisor !== null },
     );
@@ -2737,8 +2817,23 @@ async function _runCommand(args: Namespace): Promise<number> {
     }
   }
 
+  // A valid terminal report (completed, blocked, incomplete, cancelled) is a
+  // successful worker exit; the supervisor reads the outcome from the report.
+  // Only a crash without a terminal report is a non-zero exit.
   const finalReport = report ?? { status: "failed", completion_satisfied: false };
-  return finalReport["completion_satisfied"] ? 0 : 1;
+  return ["completed", "blocked", "incomplete", "cancelled"].includes(String(finalReport["status"])) ? 0 : 1;
+}
+
+/** Other runs' directories under the runs root: hidden from this run's agents. */
+function siblingRunDirs(runsRoot: string, runId: string): string[] {
+  try {
+    return fs
+      .readdirSync(runsRoot)
+      .filter((name) => name !== runId && !name.startsWith("."))
+      .map((name) => path.join(runsRoot, name));
+  } catch {
+    return [];
+  }
 }
 
 /** `serve_forever_blocking()` has no TS equivalent; wait for Ctrl+C instead. */
@@ -2860,28 +2955,36 @@ function _pyReprStr(value: string): string {
 
 /** Print one console line per role transition so a long run stays legible. */
 export function printProgress(event: string, payload: Record<string, unknown>): void {
-  const roundIndex = payload["round"];
-  if (event === "round_start") {
-    print(`\n── Round ${roundIndex}/${payload["round_budget"]} ──`);
+  const where = payload["subtask_id"] ? ` ${payload["subtask_id"]}${payload["round"] ? ` r${payload["round"]}` : ""}` : "";
+  if (event === "run_start") {
+    print(payload["resumed"] ? "\n── Resuming run ──" : "\n── Run started ──");
+  } else if (event === "plan_written") {
+    print(`\n── Plan written: ${payload["leaves"]} subtasks${Number(payload["questions"]) ? `, ${payload["questions"]} question(s) for you` : ""} ──`);
+  } else if (event === "subtask_start") {
+    print(`\n── Subtask ${payload["subtask_id"]}: ${payload["title"]} ──`);
   } else if (event === "role_start") {
-    // The reply is written when the run reaches an ending, so it gets its own
-    // heading instead of appearing to be part of that round's work.
     if (payload["role"] === "final_response") print("\n── Writing reply ──");
-    print(`  [${payload["role"]}] running...`);
+    print(`  [${payload["role"]}${where}] running...`);
   } else if (event === "role_done") {
     const parts = [String(payload["status"])];
     const durationMs = payload["duration_ms"];
-    if (typeof durationMs === "number" && Number.isInteger(durationMs)) {
-      parts.push(`${(durationMs / 1000).toFixed(1)}s`);
-    }
-    if (payload["next_step"]) parts.push(`next=${payload["next_step"]}`);
-    if (payload["audit_status"]) {
-      parts.push(
-        `audit=${payload["audit_status"]}/` +
-          `${payload["integrity_status"]}/${payload["contract_audit_status"]}`,
-      );
-    }
-    print(`  [${payload["role"]}] ${parts.join(" · ")}`);
+    if (typeof durationMs === "number" && Number.isInteger(durationMs)) parts.push(`${(durationMs / 1000).toFixed(1)}s`);
+    const cost = payload["cost_usd"];
+    if (typeof cost === "number" && cost > 0) parts.push(`$${cost.toFixed(2)}`);
+    if (payload["error"]) parts.push(String(payload["error"]).slice(0, 120));
+    print(`  [${payload["role"]}${where}] ${parts.join(" · ")}`);
+  } else if (event === "role_retry") {
+    print(`  [${payload["role"]}${where}] ${payload["kind"]}: retrying once in ${payload["pause_seconds"]}s`);
+  } else if (event === "rubric_written") {
+    print(`  contract: ${payload["criteria"]} criteria`);
+  } else if (event === "evaluation") {
+    print(`  verdict: ${payload["verdict"]} (${payload["passes"]}/${payload["criteria"]} criteria pass)`);
+  } else if (event === "subtask_done") {
+    print(`  ✔ ${payload["subtask_id"]} done in ${payload["rounds"]} round(s)`);
+  } else if (event === "subtask_blocked") {
+    print(`  ✖ ${payload["subtask_id"]} blocked`);
+  } else if (event === "plan_revised") {
+    print(`  plan revised (r${payload["revision"]}): ${payload["applied"]} change(s) applied, ${payload["rejected"]} rejected`);
   }
 }
 
@@ -2891,27 +2994,25 @@ export function printRunSummary(
 ): void {
   print(`\n${"=".repeat(72)}`);
   print(`Result:    ${report["status"]}`);
-  print(`Rounds:    ${report["rounds_run"]}/${report["max_rounds"]}`);
+  print(`Composer:  ${report["rounds_run"]}/${report["max_rounds"]} episodes`);
+  const counts = report["status_counts"];
+  if (counts && typeof counts === "object") {
+    const c = counts as Record<string, number>;
+    print(`Subtasks:  ${c.done ?? 0} done · ${c.blocked ?? 0} blocked · ${c.pending ?? 0} pending · ${c.skipped ?? 0} skipped`);
+  }
   const elapsed = report["elapsed_seconds"];
   if (typeof elapsed === "number") print(`Elapsed:   ${(elapsed / 60).toFixed(1)} min`);
+  const cost = report["cost_usd"];
+  if (typeof cost === "number" && cost > 0) print(`Cost:      $${cost.toFixed(2)}`);
   if (report["abort_reason"]) print(`Stopped:   ${report["abort_reason"]}`);
   print(`Workspace: ${options.workspace}`);
+  print(`State:     ${report["state_dir"] ?? ""}`);
   print(`Report:    ${path.join(_resolvePath(options.logDir), "report.json")}`);
-
-  // The reply answers the task in prose, so it leads. The protocol artifacts
-  // below it stay for anyone auditing how that answer was reached.
   const response = pyStrip(String(report["final_response"] ?? ""));
   if (response) {
     print(`\n${"-".repeat(72)}`);
     print(_indent(response));
     print("-".repeat(72));
-  }
-  for (const [label, key] of [
-    ["Task state", "current_task_state"],
-    ["Final audit", "latest_auditor_report"],
-  ] as const) {
-    const text = pyStrip(String(report[key] ?? ""));
-    if (text) print(`\n${label}:\n${_indent(text)}`);
   }
   print("=".repeat(72));
 }
@@ -2923,7 +3024,7 @@ function _indent(text: string, prefix = "  "): string {
 /** Return effective Manager/Executor/Auditor bindings when overridden. */
 
 // ---------------------------------------------------------------------------
-// `lh-harness start` — one-command workflow for a project folder (addition
+// `lh-harness-eray start` — one-command workflow for a project folder (addition
 // over upstream). Host mode wraps `web` in a relaunch loop so the Reload
 // button restarts the service on current source; --docker runs the whole
 // stack in a per-folder container whose only writable state is the
@@ -2954,7 +3055,7 @@ export function ensureWebToken(workspace: string): string {
   return token;
 }
 
-const _DOCKER_ENV_TEMPLATE = `# lh-harness sandbox credentials (user-scoped; read by every \`start --docker\`).
+const _DOCKER_ENV_TEMPLATE = `# lh-harness-eray sandbox credentials (user-scoped; read by every \`start --docker\`).
 # Fill in ONE auth method for the agents inside the container:
 #   CLAUDE_CODE_OAUTH_TOKEN — run \`claude setup-token\` where you are logged in
 #   or ANTHROPIC_API_KEY    — a console.anthropic.com key (per-token billing)
@@ -2996,12 +3097,18 @@ function _docker(argv: string[], options: { inherit?: boolean } = {}): { status:
 
 
 
-const _SECRETS_HEADER = `# lh-harness capability credentials (user-scoped, 0600).
+const _SECRETS_HEADER = `# lh-harness-eray capability credentials (user-scoped, 0600).
 # GitHub and Vercel tokens are auto-discovered from \`gh\` and the Vercel CLI on
 # \`start\`; add others by hand and reload:
 #   HIGGSFIELD_API_KEY=...
 #   RESEND_API_KEY=re_...      LH_EMAIL_FROM="you@example.com"
 `;
+
+function _writeSecretsFile(entries: Record<string, string>): void {
+  fs.mkdirSync(path.dirname(SECRETS_FILE), { recursive: true });
+  const body = Object.entries(entries).map(([key, value]) => `${key}=${value}`).join("\n");
+  fs.writeFileSync(SECRETS_FILE, `${_SECRETS_HEADER}${body}\n`, { mode: 0o600 });
+}
 
 /** Merge auto-discovered host tokens into ~/.lh-harness/secrets.env without
  * clobbering values the user set by hand. Returns the merged map. */
@@ -3015,18 +3122,90 @@ export function syncSecretsFile(): Record<string, string> {
       changed = true;
     }
   }
-  if (changed || !_isFile(SECRETS_FILE)) {
-    fs.mkdirSync(path.dirname(SECRETS_FILE), { recursive: true });
-    const body = Object.entries(current).map(([key, value]) => `${key}=${value}`).join("\n");
-    fs.writeFileSync(SECRETS_FILE, `${_SECRETS_HEADER}${body}\n`, { mode: 0o600 });
-  }
+  if (changed || !_isFile(SECRETS_FILE)) _writeSecretsFile(current);
   return current;
 }
 
-function _reportCapabilities(env: NodeJS.ProcessEnv): void {
+/** HTTP status of a bearer-token probe, or null when the host is unreachable. */
+async function _probeBearer(url: string, token: string): Promise<number | null> {
+  try {
+    const response = await fetch(url, {
+      headers: { Authorization: `Bearer ${token}`, "User-Agent": "lh-harness-eray" },
+      signal: AbortSignal.timeout(8_000),
+    });
+    return response.status;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Probe the GitHub/Vercel credentials against their APIs so `start` reports
+ * what will actually happen in a run, not just that a value exists. A rejected
+ * Vercel token is replaced from a fresher (unexpired) CLI login when one
+ * probes clean; otherwise the failure is loud and actionable. The Vercel CLI
+ * only mints ~8-hour OAuth tokens, so this staleness is the common case.
+ */
+async function _verifyCapabilityCredentials(env: NodeJS.ProcessEnv): Promise<number> {
+  let rejected = 0;
+  const report = (label: string, verdict: string) => print(`       ${label}: ${verdict}`);
+  if (env.GH_TOKEN || env.GITHUB_TOKEN) {
+    const status = await _probeBearer("https://api.github.com/user", String(env.GH_TOKEN || env.GITHUB_TOKEN));
+    if (status === 200) report("GitHub", "token verified against api.github.com");
+    else if (status === null) report("GitHub", "token unverified (api.github.com unreachable)");
+    else {
+      rejected += 1;
+      report("GitHub", `token REJECTED (HTTP ${status}) — run \`gh auth login\`, then rerun start`);
+    }
+  }
+  if (env.VERCEL_TOKEN) {
+    let status = await _probeBearer("https://api.vercel.com/v2/user", String(env.VERCEL_TOKEN));
+    if (status !== null && status !== 200) {
+      // Self-heal: a fresh CLI login leaves a newer, unexpired token behind.
+      const fresh = discoverHostSecrets().VERCEL_TOKEN;
+      if (fresh && fresh !== env.VERCEL_TOKEN && (await _probeBearer("https://api.vercel.com/v2/user", fresh)) === 200) {
+        const entries = parseEnvFile(SECRETS_FILE);
+        entries.VERCEL_TOKEN = fresh;
+        _writeSecretsFile(entries);
+        env.VERCEL_TOKEN = fresh;
+        status = 200;
+        report("Vercel", "stale token replaced from the current CLI login");
+      }
+    }
+    if (status === 200) report("Vercel", "token verified against api.vercel.com");
+    else if (status === null) report("Vercel", "token unverified (api.vercel.com unreachable)");
+    else {
+      rejected += 1;
+      report(
+        "Vercel",
+        `token REJECTED (HTTP ${status}) — CLI logins expire within hours; create a long-lived token at https://vercel.com/account/settings/tokens and set VERCEL_TOKEN in ~/.lh-harness/secrets.env`,
+      );
+    }
+  }
+  return rejected;
+}
+
+function _reportCapabilities(env: NodeJS.ProcessEnv, options?: { checkHostTools?: boolean }): void {
+  // A credential alone is not readiness: the agent also needs the tool that
+  // spends it. Host runs check this machine; sandbox runs use the image's
+  // own node/npx, so host tooling is irrelevant there.
+  const toolNote = (id: string): string => {
+    if (!options?.checkHostTools) return "";
+    if (id === "github") {
+      return which("gh") ? "" : " (warning: `gh` CLI not found; git HTTPS auth still works)";
+    }
+    if (id === "vercel") {
+      if (which("vercel")) return "";
+      if (which("npx")) return " (CLI not installed; agents will use `npx vercel`)";
+      return " (warning: neither `vercel` nor `npx` found; deploys will fail)";
+    }
+    return "";
+  };
   for (const item of capabilityStatus(env)) {
     if (item.alwaysOn) continue;
-    print(`${item.ready ? "[OK  ]" : "[--  ]"} ${item.label}: ${item.ready ? "credential present" : "no credential (add to ~/.lh-harness/secrets.env)"}`);
+    print(
+      `${item.ready ? "[OK  ]" : "[--  ]"} ${item.label}: ${item.ready ? `credential present${toolNote(item.id)}` : "no credential (add to ~/.lh-harness/secrets.env)"}`,
+    );
   }
 }
 
@@ -3054,9 +3233,10 @@ export function systemChromePath(): string | null {
 
 /** Args for the playwright MCP server given what this host can launch. */
 export function guiBrowserArgs(chromiumDownloaded: boolean, chromeAvailable: boolean): string[] | null {
-  if (chromiumDownloaded) return ["--headless", "--isolated", "--no-sandbox"];
+  const outputDir = ["--output-dir", path.join(DEFAULT_STATE_ROOT, "tmp", "playwright-mcp-output")];
+  if (chromiumDownloaded) return ["--headless", "--isolated", "--no-sandbox", ...outputDir];
   // Playwright's `chrome` channel launches the system browser: no download.
-  if (chromeAvailable) return ["--headless", "--isolated", "--browser", "chrome"];
+  if (chromeAvailable) return ["--headless", "--isolated", "--browser", "chrome", ...outputDir];
   return null;
 }
 
@@ -3084,7 +3264,7 @@ async function _ensureHostComputerUse(): Promise<void> {
     const args = guiBrowserArgs(download.status === 0, systemChromePath() !== null);
     if (!args) {
       eprint("[WARN] Computer use: Chromium could not be downloaded and no system Chrome was found.");
-      eprint("       GUI subtasks will have no browser; run `lh-harness plugin install playwright-mcp` after fixing network access.");
+      eprint("       GUI subtasks will have no browser; run `lh-harness-eray plugin install playwright-mcp` after fixing network access.");
       return;
     }
     const config = writeMcpConfig("playwright-mcp", "claude_code", {
@@ -3098,11 +3278,11 @@ async function _ensureHostComputerUse(): Promise<void> {
       print(`[OK  ] Computer use: playwright-mcp verified — ${verified.detail}`);
     } else {
       eprint(`[WARN] Computer use: playwright-mcp was set up but the browser self-test failed${verified ? ` (${verified.detail})` : ""}.`);
-      eprint("       GUI subtasks may fall back to no browser; run `lh-harness doctor` for detail.");
+      eprint("       GUI subtasks may fall back to no browser; run `lh-harness-eray doctor` for detail.");
     }
   } catch (exc) {
     eprint(`[WARN] Computer use setup failed (${_text(exc)}); GUI subtasks will have no browser.`);
-    eprint("       Run `lh-harness plugin install playwright-mcp` manually.");
+    eprint("       Run `lh-harness-eray plugin install playwright-mcp` manually.");
   }
 }
 
@@ -3188,7 +3368,7 @@ async function _startDocker(workspace: string, port: number, noOpen: boolean): P
       return 2;
     }
   } catch {
-    eprint("Docker is not installed (or not on PATH). Install Docker Desktop, or run `lh-harness start` without --docker.");
+    eprint("Docker is not installed (or not on PATH). Install Docker Desktop, or run `lh-harness-eray start` without --docker.");
     return 2;
   }
   const [envFile, hasAuth] = ensureDockerEnvFile();
@@ -3212,8 +3392,11 @@ async function _startDocker(workspace: string, port: number, noOpen: boolean): P
   // passed into the container; the supervisor gates each worker to the run's
   // selected capabilities, so unselected secrets never reach an agent.
   syncSecretsFile();
-  const secretsFileArgs = _isFile(SECRETS_FILE) ? ["--env-file", SECRETS_FILE] : [];
   _reportCapabilities(parseEnvFile(SECRETS_FILE) as NodeJS.ProcessEnv);
+  // The probe may rewrite secrets.env with a refreshed Vercel token; the
+  // env-file argument only names the path, which docker reads at run time.
+  await _verifyCapabilityCredentials(parseEnvFile(SECRETS_FILE) as NodeJS.ProcessEnv);
+  const secretsFileArgs = _isFile(SECRETS_FILE) ? ["--env-file", SECRETS_FILE] : [];
   const token = ensureWebToken(workspace);
   const name = startContainerName(workspace);
   const inspect = _docker(["inspect", "--format", "{{.State.Status}} {{range $p, $b := .NetworkSettings.Ports}}{{range $b}}{{.HostPort}}{{end}}{{end}}", name]);
@@ -3291,7 +3474,7 @@ async function _startDockerReady(name: string, port: number, token: string, noOp
 export function publicRoleConfigsFromArgs(
   args: Namespace,
 ): Record<string, Record<string, string>> | null {
-  const publicRoles = ["manager", "executor", "auditor"] as const;
+  const publicRoles = ["planner", "composer", "evaluator"] as const;
   const overridden = publicRoles.some((role) =>
     ["agent", "model", "reasoning_effort"].some((field) => Boolean(args[`${role}_${field}`])),
   );
@@ -3322,11 +3505,11 @@ export function writeBootstrapFailure(
   const roleDir = path.join(logDir, "role_orchestration");
   const trace = exc instanceof Error ? (exc.stack ?? String(exc)) : String(exc);
   const report = {
-    schema_version: 2,
+    schema_version: 3,
     status: "failed",
     task,
     completion_satisfied: false,
-    completion_authority: "manager_with_role_auditors",
+    completion_authority: "evaluator_contracts",
     rounds_run: 0,
     max_rounds: maxRounds,
     abort_reason: "worker_bootstrap_failure",
@@ -3345,7 +3528,7 @@ export function writeBootstrapFailure(
   try {
     _appendJsonlNofollow(path.join(roleDir, "events.jsonl"), {
       schema_version: 1,
-      event: "role_harness_failed",
+      event: "run_failed",
       status: "failed",
       ts: Date.now() / 1000,
       reason: _text(exc),

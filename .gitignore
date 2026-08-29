@@ -15,3 +15,6 @@ docker/.env
 
 # Generated MCP configs can embed secrets.
 *.mcp.json
+
+# Browser MCP residue (screenshots, console logs)
+.playwright-mcp/

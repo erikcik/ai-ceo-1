@@ -1,6 +1,6 @@
-# Containerised LongHorizon-Harness
+# Containerised lh-harness-eray
 
-Runs the Manager → Executor → Auditor loop and its Web workbench inside a
+Runs the plan-tree loop (planner → rubric → composer ↔ evaluator) and its Web workbench inside a
 container that is **isolated from the host's global Claude configuration** and
 **has its own network namespace**.
 
@@ -58,6 +58,6 @@ The run acts on `/work` (= `./workspace`); its record is in
   so GUI-capable roles (executors and both auditors — never the Manager) can
   navigate, click, type, snapshot and screenshot real web pages. Native
   desktop apps are still out of scope in a container; for those run the
-  harness on a desktop host and `lh-harness plugin install open-computer-use`
-  (or `clawdcursor`). On any host, `lh-harness plugin install playwright-mcp`
+  harness on a desktop host and `lh-harness-eray plugin install open-computer-use`
+  (or `clawdcursor`). On any host, `lh-harness-eray plugin install playwright-mcp`
   sets up the same browser server.

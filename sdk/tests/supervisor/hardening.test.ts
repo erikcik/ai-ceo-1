@@ -1029,3 +1029,75 @@ test("the worker log open compacts an old tail and tightens permissions", () => 
     workerLogLimits.keepBytes = savedKeep;
   }
 });
+
+// ---------------------------------------------------------------------------
+// Capability grants: worker env + resume carryover (addition over upstream)
+// ---------------------------------------------------------------------------
+
+test("worker env is gated to the granted capabilities and told what was granted", () => {
+  const spawnedEnvs: NodeJS.ProcessEnv[] = [];
+  const restore = withRuntime({
+    spawn: (_command, options) => {
+      spawnedEnvs.push({ ...(options as { env: NodeJS.ProcessEnv }).env });
+      return new FakeProcess();
+    },
+  });
+  const savedEnv: Record<string, string | undefined> = {};
+  for (const [key, value] of Object.entries({
+    GH_TOKEN: "gh-secret",
+    GITHUB_TOKEN: "gh-secret",
+    VERCEL_TOKEN: "vc-secret",
+    RESEND_API_KEY: "re-secret",
+    HIGGSFIELD_API_KEY: "hf-secret",
+  })) {
+    savedEnv[key] = process.env[key];
+    process.env[key] = value;
+  }
+  try {
+    const root = tmpDir();
+    const supervisor = new RunSupervisor(path.join(root, "runs"), {
+      workspaceRoot: path.join(root, "workspace"),
+    });
+    supervisor.createRun({ task: "deploy it", capabilities: ["github", "vercel"] });
+    assert.equal(spawnedEnvs.length, 1);
+    const env = spawnedEnvs[0]!;
+    assert.equal(env.GH_TOKEN, "gh-secret");
+    assert.equal(env.VERCEL_TOKEN, "vc-secret");
+    assert.equal(env.RESEND_API_KEY, undefined, "unselected email secret must be stripped");
+    assert.equal(env.HIGGSFIELD_API_KEY, undefined, "unselected media secret must be stripped");
+    assert.equal(env.LH_HARNESS_GRANTED_CAPABILITIES, "browser,github,vercel");
+  } finally {
+    restore();
+    for (const [key, value] of Object.entries(savedEnv)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
+});
+
+test("a retry resume carries the original run's capability grants", () => {
+  const spawnedEnvs: NodeJS.ProcessEnv[] = [];
+  const restore = withRuntime({
+    spawn: (_command, options) => {
+      spawnedEnvs.push({ ...(options as { env: NodeJS.ProcessEnv }).env });
+      return new FakeProcess(7);
+    },
+  });
+  try {
+    const root = tmpDir();
+    const supervisor = new RunSupervisor(path.join(root, "runs"), {
+      workspaceRoot: path.join(root, "workspace"),
+    });
+    const created = supervisor.createRun({ task: "deploy it", capabilities: ["vercel"] });
+    const runId = String(created.id);
+    assert.equal(supervisor.status(runId).status, "failed", "exit 7 makes the run terminal");
+
+    const retried = supervisor.resume(runId, { mode: "retry" });
+    const owner = retried.owner as Record<string, unknown>;
+    assert.deepEqual(owner.capabilities, ["browser", "vercel"], "grants must survive a retry");
+    assert.equal(spawnedEnvs.length, 2);
+    assert.equal(spawnedEnvs[1]!.LH_HARNESS_GRANTED_CAPABILITIES, "browser,vercel");
+  } finally {
+    restore();
+  }
+});

@@ -15,17 +15,8 @@ import { normaliseReasoningEffort, supportsReasoningEffort } from "./agent_regis
 export const PROJECT_CONFIG_PATH = path.join(".lh-harness", "config.toml");
 
 const _AGENT_CHOICES = new Set(["claude_code"]);
-const _ROLE_NAMES = new Set([
-  "manager",
-  "executor",
-  "gui_executor",
-  "cli_executor",
-  "auditor",
-  "gui_auditor",
-  "cli_auditor",
-  "final_response",
-]);
-const _TIMEOUT_NAMES = new Set(["manager", "gui_executor", "cli_executor", "auditor"]);
+const _ROLE_NAMES = new Set(["planner", "composer", "evaluator", "prompt_tailor", "rubric", "final_response"]);
+const _TIMEOUT_NAMES = new Set(["prompt_tailor", "planner", "rubric", "composer", "evaluator", "final_response"]);
 const _RUN_KEYS = new Set([
   "agent",
   "model",
@@ -42,6 +33,12 @@ const _RUN_KEYS = new Set([
   "mcp_add_dirs",
   "guard_exclude_paths",
   "max_rounds",
+  "max_eval_rounds",
+  "min_research_agents",
+  "research_model",
+  "episode_budget_usd",
+  "sources_dir",
+  "memory_dir",
   "dashboard",
   "dashboard_port",
   "roles",
@@ -56,90 +53,75 @@ const _STRING_KEYS = new Set([
   "base_url",
   "claude_mcp_config",
   "codex_mcp_config",
+  "research_model",
+  "sources_dir",
+  "memory_dir",
 ]);
 
-export const CONFIG_TEMPLATE = `# LongHorizon-Harness project defaults.
+export const CONFIG_TEMPLATE = `# lh-harness-eray project defaults.
 # Explicit CLI arguments override these values.
 
 [run]
 agent = "claude_code"
 model = "claude-opus-5"
 
-# Reasoning depth, forwarded to whichever backend exposes it (Codex through
-# \`model_reasoning_effort\`, Claude Code through \`--effort\`, OpenCode through
-# \`--variant\`; only Claude Code is wired in this port). Any value the backend
-# accepts is allowed, so a newer tier does not need a harness release. Leave
-# unset to keep the provider's own setting.
+# Reasoning depth forwarded to Claude Code (\`--effort\`): low, medium, high, xhigh, max.
 # reasoning_effort = "high"
 
 env = "local"
 runs_root = "./.lh-harness/runs"
-# Agents work in the directory lh-harness was started from unless set here.
+# Agents work in the directory lh-harness-eray was started from unless set here.
 # workspace = "./workspace"
-# harness_dir = "./.lh-harness/runs/<run-id>/harness"
-# log_dir = "./lh_harness"
 
 # base_url = "https://api.example.com/v1"
 
 prompt_language = "en"
-# Each agent reads its own format; installed plugins are loaded automatically.
 # claude_mcp_config = "/path/to/mcp.json"
-# codex_mcp_config = "/path/to/mcp.toml"
 mcp_add_dirs = []
 
-# Build/cache directories the auditor read-only guard should not snapshot,
-# e.g. ["target", "node_modules", "build", ".venv"]. Agents can still read
-# them. Exclusions must stay inside the workspace; ".git" and harness-owned
-# control/state paths are rejected at startup, and the effective list is
-# echoed at run start and recorded in each audited episode's metadata.
-# Passing --guard-exclude-path replaces this list rather than adding to it.
+# Build/cache directories the evaluator read-only guard should not snapshot,
+# e.g. ["node_modules", ".next", "build"]. Agents can still read them.
 guard_exclude_paths = []
 
+# The loop: planner -> (rubric -> composer <-> evaluator) per subtask -> reply.
+# max_rounds caps the total number of composer episodes in a run.
 max_rounds = 25
+# Composer/evaluator rounds per subtask before it is marked blocked.
+max_eval_rounds = 3
+# Research subagents the planner must spawn; the rubric agent and evaluator
+# spawn a third of this per subtask (at least 3) and reuse sibling rubrics.
+min_research_agents = 10
+# Model alias for those research subagents.
+research_model = "sonnet"
+# Dollar ceiling per agent episode (0 = provider default).
+episode_budget_usd = 0
+# Operator reference material and the memory wiki (default: inside the workspace).
+# sources_dir = "./sources"
+# memory_dir = "./memory"
+
 dashboard = true
-# Embedded dashboards use an OS-assigned port by default so concurrent runs
-# cannot accidentally share or race a fixed listener. Standalone \`web\` keeps
-# its explicit 8799 default for the operator-facing control plane.
 dashboard_port = 0
 
+# Seconds per agent session. Research-heavy roles (planner, evaluator) and
+# the composer regularly need 30-50 minutes; a timeout counts as a failed
+# round, never as a dead run.
 [run.timeouts]
-manager = 900
-gui_executor = 1800
-cli_executor = 1800
-auditor = 900
+prompt_tailor = 900
+planner = 3600
+rubric = 1800
+composer = 3600
+evaluator = 3600
+final_response = 900
 
-[run.roles.manager]
-# agent = "claude_code"
-# model = "claude-opus-5"
-# reasoning_effort = "high"
-
-[run.roles.executor]
-# agent = "claude_code"
+# Models per role. prompt_tailor and final_response follow the planner;
+# rubric follows the evaluator.
+[run.roles.planner]
 # model = "claude-opus-5"
 
-[run.roles.gui_executor]
-# agent = "claude_code"
+[run.roles.composer]
 # model = "claude-opus-5"
 
-[run.roles.cli_executor]
-# agent = "claude_code"
-# model = "claude-opus-5"
-
-[run.roles.auditor]
-# agent = "claude_code"
-# model = "claude-opus-5"
-
-[run.roles.gui_auditor]
-# agent = "claude_code"
-# model = "claude-opus-5"
-
-[run.roles.cli_auditor]
-# agent = "claude_code"
-# model = "claude-opus-5"
-
-# Writes the closing reply to you; falls back to the manager's agent/model.
-[run.roles.final_response]
-# agent = "claude_code"
+[run.roles.evaluator]
 # model = "claude-opus-5"
 `;
 
@@ -169,7 +151,7 @@ export function createProjectConfig(
   return target;
 }
 
-/** `lh-harness init` entry point; same behaviour as `create_project_config`. */
+/** `lh-harness-eray init` entry point; same behaviour as `create_project_config`. */
 export function writeConfigTemplate(force = false, target: string = PROJECT_CONFIG_PATH): string {
   return createProjectConfig(target, force);
 }
@@ -218,6 +200,21 @@ export function _flattenRunTable(run: Record<string, unknown>): Record<string, u
     defaults.prompt_language = _choice(run.prompt_language, "run.prompt_language", new Set(["en"]));
   }
   if ("max_rounds" in run) defaults.max_rounds = _positiveInt(run.max_rounds, "run.max_rounds");
+  if ("max_eval_rounds" in run) defaults.max_eval_rounds = _positiveInt(run.max_eval_rounds, "run.max_eval_rounds");
+  if ("min_research_agents" in run) {
+    const value = run.min_research_agents;
+    if (typeof value !== "number" || !Number.isInteger(value) || value < 0) {
+      throw new ProjectConfigError("run.min_research_agents must be an integer of at least 0");
+    }
+    defaults.min_research_agents = value;
+  }
+  if ("episode_budget_usd" in run) {
+    const value = run.episode_budget_usd;
+    if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+      throw new ProjectConfigError("run.episode_budget_usd must be a number of at least 0");
+    }
+    defaults.episode_budget_usd = value;
+  }
   if ("dashboard" in run) defaults.dashboard = _boolean(run.dashboard, "run.dashboard");
   if ("dashboard_port" in run) defaults.dashboard_port = _port(run.dashboard_port, "run.dashboard_port");
   if ("mcp_add_dirs" in run) {
@@ -338,14 +335,12 @@ function errText(exc: unknown): string {
 
 /** Role options as (dest prefix, broader option it falls back to). */
 export const ROLE_PARENTS: Readonly<Record<string, string | null>> = {
-  manager: null,
-  executor: null,
-  gui_executor: "executor",
-  cli_executor: "executor",
-  auditor: null,
-  gui_auditor: "auditor",
-  cli_auditor: "auditor",
-  final_response: "manager",
+  planner: null,
+  composer: null,
+  evaluator: null,
+  prompt_tailor: "planner",
+  rubric: "evaluator",
+  final_response: "planner",
 };
 
 export type RoleArgs = Record<string, unknown>;

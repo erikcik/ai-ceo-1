@@ -480,13 +480,25 @@ export function _streamProjectionSignature(snapshot: Dict): string {
     ]);
   const run = isRecord(snapshot.run) ? snapshot.run : {};
   const controls = isRecord(snapshot.controls) ? snapshot.controls : {};
+  const loop = isRecord(snapshot.loop) ? snapshot.loop : {};
+  const phase = isRecord(loop.phase) ? loop.phase : {};
+  const subtasks = (Array.isArray(loop.subtasks) ? loop.subtasks : [])
+    .filter(isRecord)
+    .map((item) => [item.id ?? null, item.status ?? null, item.rounds ?? null, Array.isArray(item.evaluations) ? item.evaluations.length : 0]);
+  const plan = isRecord(loop.plan) ? loop.plan : {};
   return JSON.stringify([
     run.status ?? null,
     run.finished_at ?? null,
     run.exit_code ?? null,
     run.resume_epoch ?? null,
-    snapshot.active_round ?? null,
+    snapshot.active_subtask ?? null,
     snapshot.active_role ?? null,
+    phase.phase ?? null,
+    phase.current_role ?? null,
+    phase.current_round ?? null,
+    plan.revision ?? null,
+    Array.isArray(loop.episodes) ? loop.episodes.length : 0,
+    subtasks,
     controls.can_inject ?? null,
     controls.can_abort ?? null,
     controls.can_resume ?? null,
@@ -753,8 +765,8 @@ export async function _snapshotFor(
   }
   if (TERMINAL_STATUSES.has(status)) {
     // Supervisor lifecycle is authoritative even when the worker died
-    // before its final round directory was marked closed.
-    result.active_round = null;
+    // before the loop marked its phase finished.
+    result.active_subtask = null;
     result.active_role = null;
   }
   const alive = Boolean(managed.alive);
@@ -992,7 +1004,7 @@ export function createApp(options: CreateAppOptions = {}): WebApp {
         agent: "claude_code",
         model: DEFAULT_CLAUDE_MODEL,
         roles: Object.fromEntries(
-          ["manager", "executor", "auditor"].map((role) => [
+          ["planner", "composer", "evaluator"].map((role) => [
             role,
             { agent: "claude_code", model: DEFAULT_CLAUDE_MODEL },
           ]),
@@ -1165,16 +1177,7 @@ export function createApp(options: CreateAppOptions = {}): WebApp {
     sendJson(res, 200, { ok: true, run: created });
   }
 
-  function artifactText(res: ServerResponse, state: DashboardState, roundIndex: number, name: string): void {
-    const target = state.resolveRoundArtifact(roundIndex, name);
-    if (target === null) throw new HttpError(404, "artifact not found");
-    const size = state.roundArtifactSize(roundIndex, name);
-    if (size === null) throw new HttpError(404, "artifact not found");
-    if (size > _MAX_ARTIFACT_BYTES) throw new HttpError(413, "artifact is too large");
-    const content = state.readRoundArtifact(roundIndex, name);
-    if (content === null) {
-      throw new HttpError(size >= _MAX_ARTIFACT_BYTES ? 413 : 404, "artifact changed during read");
-    }
+  function sendTextFile(res: ServerResponse, content: string): void {
     sendResponse(res, 200, content, {
       "Content-Type": "text/plain; charset=utf-8",
       "X-Content-Type-Options": "nosniff",
@@ -1182,24 +1185,17 @@ export function createApp(options: CreateAppOptions = {}): WebApp {
     });
   }
 
-  function rawArtifact(res: ServerResponse, state: DashboardState, roundIndex: number, name: string): void {
-    const target = state.resolveRoundArtifact(roundIndex, name);
-    if (target === null) throw new HttpError(404, "artifact not found");
-    const size = state.roundArtifactSize(roundIndex, name);
-    if (size === null) throw new HttpError(404, "artifact not found");
-    if (size > _MAX_ARTIFACT_BYTES) throw new HttpError(413, "artifact is too large");
-    const content = state.readRoundArtifactBytes(roundIndex, name);
-    if (content === null) {
-      // Never hand a path to a file response after a separate stat: the
-      // worker can replace/grow the file during that window.
-      throw new HttpError(size >= _MAX_ARTIFACT_BYTES ? 413 : 404, "artifact changed during read");
-    }
-    const suffix = path.extname(String(target)).toLowerCase();
+  function sendRawFile(res: ServerResponse, content: Buffer, name: string): void {
+    const suffix = path.extname(name).toLowerCase();
     // Never let an agent-produced document execute in the dashboard origin.
     let mediaType: string | undefined = _INLINE_RASTER_TYPES[suffix];
     let disposition: string;
     let contentSecurityPolicy: string;
     if (mediaType !== undefined) {
+      disposition = "inline";
+      contentSecurityPolicy = "default-src 'none'";
+    } else if (suffix === ".mp4" || suffix === ".webm" || suffix === ".mov") {
+      mediaType = suffix === ".webm" ? "video/webm" : suffix === ".mov" ? "video/quicktime" : "video/mp4";
       disposition = "inline";
       contentSecurityPolicy = "default-src 'none'";
     } else {
@@ -1216,34 +1212,50 @@ export function createApp(options: CreateAppOptions = {}): WebApp {
     });
   }
 
-  function trajectory(
-    res: ServerResponse,
-    state: DashboardState,
-    runId: string,
-    roundIndex: number,
-    role: string,
-  ): void {
-    const result = state.readTrajectory(roundIndex, role) as Dict | null;
+  /** GET /api/runs/{id}/state/{path}[?raw=1|?list=1] — files under <run>/state. */
+  function stateFile(res: ServerResponse, state: DashboardState, relative: string, params: URLSearchParams): void {
+    if (params.get("list") === "1") {
+      sendJson(res, 200, { path: relative, entries: state.listStateDir(relative) });
+      return;
+    }
+    const size = state.stateFileSize(relative);
+    if (size === null) throw new HttpError(404, "state file not found");
+    if (size > _MAX_ARTIFACT_BYTES) throw new HttpError(413, "state file is too large");
+    if (params.get("raw") === "1") {
+      const content = state.readStateFileBytes(relative);
+      if (content === null) throw new HttpError(404, "state file changed during read");
+      sendRawFile(res, content, path.basename(relative));
+      return;
+    }
+    const content = state.readStateFile(relative);
+    if (content === null) throw new HttpError(404, "state file changed during read");
+    sendTextFile(res, content);
+  }
+
+  function episodeArtifact(res: ServerResponse, state: DashboardState, role: string, seq: number, name: string): void {
+    const size = state.episodeArtifactSize(role, seq, name);
+    if (size === null) throw new HttpError(404, "artifact not found");
+    if (size > _MAX_ARTIFACT_BYTES) throw new HttpError(413, "artifact is too large");
+    const content = state.readEpisodeArtifactBytes(role, seq, name);
+    if (content === null) throw new HttpError(404, "artifact changed during read");
+    sendRawFile(res, content, name);
+  }
+
+  function trajectory(res: ServerResponse, state: DashboardState, runId: string, role: string, seq: number): void {
+    const result = state.readTrajectory(role, seq) as Dict | null;
     if (result === null || result === undefined) throw new HttpError(404, "trajectory not found");
-    // Normalized trajectories use OSWorld-style screenshot_file references
-    // rather than multi-megabyte data URLs. Resolve only artifacts that pass
-    // the same no-follow boundary checks as the raw artifact endpoint.
     const steps = Array.isArray(result.steps) ? result.steps : [];
     for (const step of steps) {
       if (!isRecord(step)) continue;
       let names: unknown[] = [];
-      if (Array.isArray(step.screenshot_files)) {
-        names = step.screenshot_files;
-      } else if (typeof step.screenshot_file === "string") {
-        names = [step.screenshot_file];
-      }
+      if (Array.isArray(step.screenshot_files)) names = step.screenshot_files;
+      else if (typeof step.screenshot_file === "string") names = [step.screenshot_file];
       const safeNames = names.filter(
-        (name): name is string =>
-          typeof name === "string" && state.resolveRoundArtifact(roundIndex, name) !== null,
+        (name): name is string => typeof name === "string" && state.resolveEpisodeArtifact(role, seq, name) !== null,
       );
       if (safeNames.length) {
         step.images = safeNames.map(
-          (name) => `/api/runs/${pyQuote(runId)}/rounds/${roundIndex}/artifacts/${pyQuote(name)}/raw`,
+          (name) => `/api/runs/${pyQuote(runId)}/episodes/${pyQuote(role)}/${seq}/artifacts/${pyQuote(name)}/raw`,
         );
         step.has_image = true;
       }
@@ -1400,29 +1412,28 @@ export function createApp(options: CreateAppOptions = {}): WebApp {
       });
       return;
     }
-    // GET /api/runs/{run_id}/rounds/{round_index}/...
-    if (method === "GET" && tail.length >= 3 && tail[0] === "rounds") {
-      const roundIndex = parsePathInt(tail[1]);
-      const kind = tail[2];
+    // GET /api/runs/{run_id}/state/{path...}
+    if (method === "GET" && tail.length >= 2 && tail[0] === "state") {
       const stateForRun = await _stateOr404(registry, runId);
-      if (kind === "artifacts" && tail.length === 3) {
-        sendJson(res, 200, {
-          run_id: runId,
-          round_index: roundIndex,
-          artifacts: stateForRun.listRoundArtifacts(roundIndex),
-        });
+      stateFile(res, stateForRun, tail.slice(1).join("/"), params);
+      return;
+    }
+    // GET /api/runs/{run_id}/episodes/{role}/{seq}/trajectory | /artifacts | /artifacts/{name}/raw
+    if (method === "GET" && tail.length >= 4 && tail[0] === "episodes") {
+      const role = tail[1];
+      const seq = parsePathInt(tail[2]);
+      const kind = tail[3];
+      const stateForRun = await _stateOr404(registry, runId);
+      if (kind === "trajectory" && tail.length === 4) {
+        trajectory(res, stateForRun, runId, role, seq);
         return;
       }
       if (kind === "artifacts" && tail.length === 4) {
-        artifactText(res, stateForRun, roundIndex, tail[3]);
+        sendJson(res, 200, { run_id: runId, role, episode: seq, artifacts: stateForRun.listEpisodeArtifacts(role, seq) });
         return;
       }
-      if (kind === "artifacts" && tail.length === 5 && tail[4] === "raw") {
-        rawArtifact(res, stateForRun, roundIndex, tail[3]);
-        return;
-      }
-      if (kind === "trajectory" && tail.length === 4) {
-        trajectory(res, stateForRun, runId, roundIndex, tail[3]);
+      if (kind === "artifacts" && tail.length === 6 && tail[5] === "raw") {
+        episodeArtifact(res, stateForRun, role, seq, tail[4]);
         return;
       }
       throw new HttpError(404, "Not Found");
@@ -1957,7 +1968,7 @@ export async function startWebServer(options: StartWebServerOptions = {}): Promi
   return handle;
 }
 
-/** Run the optional control API in the foreground (``lh-harness web``). */
+/** Run the optional control API in the foreground (``lh-harness-eray web``). */
 export async function runWebServer(options: {
   runsRoot?: string | null;
   logDir?: string | null;
@@ -1980,7 +1991,7 @@ export async function runWebServer(options: {
   }
   const runId = options.logDir ? path.basename(path.dirname(path.resolve(expandUser(options.logDir)))) : null;
   const effectiveRoot = options.logDir ? null : options.runsRoot ?? null;
-  // Standalone workbench (`lh-harness web` / `dashboard`): own the run
+  // Standalone workbench (`lh-harness-eray web` / `dashboard`): own the run
   // supervisor so the UI can create, stop, abort and resume runs. Pinning one
   // run's log dir (`--log-dir`) stays read-only, exactly as upstream.
   const supervisor =
@@ -2072,7 +2083,7 @@ function openBrowser(url: string): void {
   }
 }
 
-/** Wait for readiness, then open a browser — used by `lh-harness run --dashboard`. */
+/** Wait for readiness, then open a browser — used by `lh-harness-eray run --dashboard`. */
 export async function openBrowserWhenReady(url: string): Promise<void> {
   const ready = await waitForDashboardReady(url, { timeout: 10.0, pollInterval: 0.05 });
   if (!ready) {

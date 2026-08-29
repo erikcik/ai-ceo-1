@@ -1,15 +1,15 @@
 {
-  "name": "lh-harness",
+  "name": "lh-harness-eray",
   "version": "0.1.7",
   "description": "LongHorizon-Harness (Manager -> Executor -> Auditor loop engineering) ported 1:1 to TypeScript on the Claude Agent SDK.",
   "type": "module",
   "scripts": {
-    "lh-harness": "node bin/lh-harness.mjs",
+    "lh-harness-eray": "node bin/lh-harness-eray.mjs",
     "typecheck": "tsc --noEmit",
     "test": "node --import tsx --test \"tests/**/*.test.ts\"",
     "build:web": "npm --prefix frontend/web install && npm --prefix frontend/web run build",
-    "web": "node bin/lh-harness.mjs web",
-    "doctor": "node bin/lh-harness.mjs doctor"
+    "web": "node bin/lh-harness-eray.mjs web",
+    "doctor": "node bin/lh-harness-eray.mjs doctor"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.3.235",
@@ -23,7 +23,7 @@
     "typescript": "^7.0.2"
   },
   "bin": {
-    "lh-harness": "bin/lh-harness.mjs"
+    "lh-harness-eray": "bin/lh-harness-eray.mjs"
   },
   "files": [
     "bin",

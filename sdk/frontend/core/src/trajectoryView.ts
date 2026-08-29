@@ -14,11 +14,17 @@ export interface TrajectoryStep extends Record<string, unknown> {
 
 export interface TrajectoryView {
   run_id?: string;
-  round_index: number;
   role: string;
+  /** Episode sequence (`epNNN`) the trajectory belongs to. */
+  episode?: number;
+  /** Retained for records written before episodes replaced rounds. */
+  round_index?: number;
   step_count?: number;
   raw_chars?: number;
   steps: TrajectoryStep[];
+  warning?: string;
+  steps_truncated?: boolean;
+  trajectory_source?: string;
 }
 
 export interface TrajectoryItem {
@@ -34,7 +40,7 @@ export interface TrajectoryItem {
 
 export interface TrajectoryProjection {
   runId: string | null;
-  roundIndex: number;
+  episode: number;
   role: string;
   totalSteps: number;
   shownFrom: number;
@@ -156,7 +162,7 @@ export function projectTrajectoryView(
   const totalSteps = filtered.length;
   return {
     runId: trajectory?.run_id || null,
-    roundIndex: trajectory?.round_index ?? 0,
+    episode: trajectory?.episode ?? trajectory?.round_index ?? 0,
     role: trajectory?.role || '',
     totalSteps,
     shownFrom: totalSteps > maxSteps ? filtered[totalSteps - maxSteps].sourceIndex : (items[0]?.index ?? 0),

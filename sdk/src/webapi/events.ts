@@ -23,22 +23,31 @@ export class EventNormalizationError extends Error {
 }
 
 export const EVENT_TYPE_MAP: Record<string, string> = {
-  role_harness_start: "run.started",
-  manager_round_start: "round.manager.started",
-  manager_round_done: "round.manager.completed",
-  executor_role_start: "round.executor.started",
-  executor_role_done: "round.executor.completed",
-  auditor_role_start: "round.auditor.started",
-  auditor_role_done: "round.auditor.completed",
-  auditor_format_repair_start: "round.audit_repair.started",
-  auditor_format_repair_done: "round.audit_repair.completed",
-  final_response_start: "round.final_response.started",
-  final_response_done: "round.final_response.completed",
-  final_response_discarded: "round.final_response.discarded",
-  managed_round_recorded: "round.recorded",
-  role_harness_done: "run.completed",
-  role_harness_cancelled: "run.cancelled",
-  role_harness_failed: "run.failed",
+  run_started: "run.started",
+  run_resumed: "run.resumed",
+  run_finished: "run.completed",
+  run_cancelled: "run.cancelled",
+  run_failed: "run.failed",
+  phase_started: "phase.started",
+  briefings_written: "tailor.completed",
+  plan_written: "plan.written",
+  plan_rejected: "plan.rejected",
+  plan_revised: "plan.revised",
+  episode_started: "episode.started",
+  episode_finished: "episode.completed",
+  subtask_started: "subtask.started",
+  subtask_done: "subtask.completed",
+  subtask_blocked: "subtask.blocked",
+  subtask_reopened: "subtask.reopened",
+  rubric_written: "rubric.written",
+  rubric_fallback: "rubric.fallback",
+  context_selected: "context.selected",
+  composer_finished: "composer.completed",
+  evaluation: "evaluation.recorded",
+  human_gate: "operator.gate.opened",
+  human_gate_resolved: "operator.gate.resolved",
+  operator_decision: "operator.decision",
+  agent_runtime_failed: "episode.failed",
   approval_created: "operator.approval.pending",
   approval_resolved: "operator.approval.resolved",
   instruction_queued: "operator.instruction.queued",
@@ -251,15 +260,7 @@ export function normalizeEvent(
     }
   }
   if (role === null) {
-    for (const candidate of [
-      "manager",
-      "executor_gui",
-      "executor_cli",
-      "executor",
-      "auditor_format_repair",
-      "auditor",
-      "final_response",
-    ]) {
+    for (const candidate of ["prompt_tailor", "planner", "rubric", "composer", "evaluator", "final_response"]) {
       if (`.${eventType}.`.includes(`.${candidate}.`) || eventType.startsWith(`${candidate}.`)) {
         role = candidate;
         break;

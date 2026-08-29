@@ -37,22 +37,59 @@ after(async () => {
 function fixture(tmp: string, controlEnabled = true): { root: string; state: DashboardState } {
   const root = path.join(tmp, "runs");
   const run = path.join(root, "run-1");
-  const roleDir = path.join(run, "logs", "role_management");
-  const roundDir = path.join(roleDir, "rounds", "round_001");
-  fs.mkdirSync(roundDir, { recursive: true });
-  fs.writeFileSync(path.join(run, "logs", "report.json"), JSON.stringify({ task: "fixture" }), "utf-8");
+  const logDir = path.join(run, "lh_harness");
+  const roleDir = path.join(logDir, "role_orchestration");
+  const stateDir = path.join(run, "state");
+  const episode = path.join(logDir, "composer_episodes", "ep001");
+  fs.mkdirSync(roleDir, { recursive: true });
+  fs.mkdirSync(episode, { recursive: true });
+  fs.writeFileSync(path.join(logDir, "report.json"), JSON.stringify({ task: "fixture" }), "utf-8");
   fs.writeFileSync(
     path.join(roleDir, "events.jsonl"),
     `${[
-      JSON.stringify({ ts: 1, event: "role_harness_start" }),
-      JSON.stringify({ ts: 2, event: "manager_round_start", round_index: 1 }),
+      JSON.stringify({ ts: 1, event: "run_started" }),
+      JSON.stringify({ ts: 2, event: "episode_started", role: "composer", round: 1 }),
     ].join("\n")}\n`,
     "utf-8",
   );
-  fs.writeFileSync(path.join(roundDir, "manager_plan.txt"), "next_step: execute", "utf-8");
-  fs.writeFileSync(path.join(roundDir, "task_state.txt"), "fixture state", "utf-8");
-  fs.writeFileSync(path.join(roundDir, "screenshot.png"), Buffer.from("\x89PNG\r\nfixture-image", "latin1"));
-  return { root, state: new DashboardState(path.join(run, "logs"), { runsRoot: root, controlEnabled }) };
+  writeState(stateDir, "task/TASK.md", "fixture task\n");
+  writeState(
+    stateDir,
+    "phase.json",
+    JSON.stringify({
+      phase: "executing",
+      current_subtask: "build-api",
+      current_role: "composer",
+      current_round: 1,
+      updated_at: 2,
+      detail: "",
+    }),
+  );
+  writeState(
+    stateDir,
+    "plan/plan.json",
+    JSON.stringify({
+      schema_version: 1,
+      title: "Fixture plan",
+      nodes: [{ id: "build-api", title: "Build the API", goal: "expose /health", children: [], status: "composing" }],
+      revision: 1,
+    }),
+  );
+  writeState(stateDir, "progress/build-api.md", "next_step: execute");
+  fs.writeFileSync(path.join(episode, "screenshot.png"), Buffer.from("\x89PNG\r\nfixture-image", "latin1"));
+  return { root, state: new DashboardState(logDir, { runsRoot: root, controlEnabled }) };
+}
+
+/** `<run>/state/<relative>` — the loop's own state tree. */
+function writeState(stateDir: string, relative: string, body: string): void {
+  const target = path.join(stateDir, ...relative.split("/"));
+  fs.mkdirSync(path.dirname(target), { recursive: true });
+  fs.writeFileSync(target, body, "utf-8");
+}
+
+/** The composer episode directory the fixture pre-creates. */
+function episodeDir(root: string): string {
+  return path.join(root, "run-1", "lh_harness", "composer_episodes", "ep001");
 }
 
 type TestSocket = { socket: WebSocket; next(timeoutMs?: number): Promise<Record<string, unknown>> };
@@ -88,24 +125,32 @@ function openSocket(url: string, protocols?: string[]): Promise<TestSocket> {
 }
 
 test("event normalization and partial tail", () => {
-  const event = normalizeEvent({ ts: 1, event: "manager_round_start", round_index: 3 }, {
+  const event = normalizeEvent({ ts: 1, event: "episode_started", role: "composer", round: 3 }, {
     run_id: "run-1",
     sequence: 7,
   });
   assert.equal(event.event_id, "run-1:000007");
-  assert.equal(event.type, "round.manager.started");
+  assert.equal(event.type, "episode.started");
+  assert.equal(event.role, "composer");
   assert.equal(event.round, 3);
   assert.equal(event.status, "running");
 
+  // An unmapped name still normalises through the `_start`/`_done` suffix rule.
   const reply = normalizeEvent({ ts: 2, event: "final_response_done", round: 3 }, { run_id: "run-1", sequence: 8 });
-  assert.equal(reply.type, "round.final_response.completed");
-  assert.equal(reply.role, "final_response");
+  assert.equal(reply.type, "final.response.completed");
   assert.equal(reply.status, "completed");
+
+  const subtask = normalizeEvent({ ts: 3, event: "subtask_done", subtask_id: "build-api" }, {
+    run_id: "run-1",
+    sequence: 9,
+  });
+  assert.equal(subtask.type, "subtask.completed");
+  assert.equal(subtask.payload.subtask_id, "build-api");
 
   const legacyEpisodeStatus = { status: "done", duration_ms: 42, exit_code: 0 };
   const legacyDone = normalizeEvent(
-    { ts: 3, event: "manager_round_done", round: 3, status: legacyEpisodeStatus },
-    { run_id: "run-1", sequence: 9 },
+    { ts: 4, event: "episode_finished", role: "composer", round: 3, status: legacyEpisodeStatus },
+    { run_id: "run-1", sequence: 10 },
   );
   assert.equal(legacyDone.status, "completed");
   assert.deepEqual(legacyDone.payload.episode_status, legacyEpisodeStatus);
@@ -113,9 +158,9 @@ test("event normalization and partial tail", () => {
   const target = path.join(tmpDir(), "events.jsonl");
   fs.writeFileSync(
     target,
-    `${JSON.stringify({ ts: 1, event: "role_harness_start" })}\n${JSON.stringify({
+    `${JSON.stringify({ ts: 1, event: "run_started" })}\n${JSON.stringify({
       ts: 2,
-      event: "manager_round_start",
+      event: "episode_started",
     })}`,
     "utf-8",
   );
@@ -128,82 +173,95 @@ test("event normalization and partial tail", () => {
 test("api resolves normalized screenshot file reference", async () => {
   const tmp = tmpDir();
   const { root, state } = fixture(tmp);
-  const roundDir = path.join(root, "run-1", "logs", "role_management", "rounds", "round_001");
-  fs.writeFileSync(path.join(roundDir, "executor_raw_trajectory.jsonl"), "{}\n", "utf-8");
-  fs.writeFileSync(path.join(roundDir, "executor_step_0001_01.png"), Buffer.from("\x89PNG\r\nnormalized", "latin1"));
+  const episode = episodeDir(root);
+  fs.writeFileSync(path.join(episode, "composer_raw_trajectory.jsonl"), "{}\n", "utf-8");
+  fs.writeFileSync(path.join(episode, "composer_step_0001_01.png"), Buffer.from("\x89PNG\r\nnormalized", "latin1"));
   fs.writeFileSync(
-    path.join(roundDir, "executor_trajectory.jsonl"),
+    path.join(episode, "composer_trajectory.jsonl"),
     `${JSON.stringify({
       step_num: 1,
       kind: "tool_result",
       text: "[image]",
       has_image: true,
-      screenshot_file: "executor_step_0001_01.png",
+      screenshot_file: "composer_step_0001_01.png",
     })}\n`,
     "utf-8",
   );
   const handle = await serve({ state, runsRoot: root, runId: "run-1" });
 
-  const response = await fetch(`${handle.url}api/runs/run-1/rounds/1/trajectory/executor`);
+  const response = await fetch(`${handle.url}api/runs/run-1/episodes/composer/1/trajectory`);
   const text = await response.text();
 
   assert.equal(response.status, 200);
   const body = JSON.parse(text);
   assert.equal(body.trajectory_source, "normalized");
-  assert.deepEqual(body.steps[0].images, ["/api/runs/run-1/rounds/1/artifacts/executor_step_0001_01.png/raw"]);
+  assert.deepEqual(body.steps[0].images, [
+    "/api/runs/run-1/episodes/composer/1/artifacts/composer_step_0001_01.png/raw",
+  ]);
   assert.ok(!text.includes("data:image"));
 });
 
-test("completed snapshot clears active round and exposes completion evidence", () => {
+test("a completed snapshot clears the active subtask and exposes completion evidence", () => {
   const tmp = tmpDir();
-  const root = path.join(tmp, "runs");
-  const run = path.join(root, "run-1");
-  const roleDir = path.join(run, "logs", "role_management");
-  const roundDir = path.join(roleDir, "rounds", "round_001");
-  fs.mkdirSync(roundDir, { recursive: true });
+  const { root, state } = fixture(tmp);
+  const logDir = path.join(root, "run-1", "lh_harness");
   const report = {
-    status: "complete",
+    schema_version: 3,
+    status: "completed",
     task: "fixture complete",
     completion_satisfied: true,
-    completion_authority: "manager_with_role_auditors",
+    completion_authority: "evaluator_contracts",
+    rounds_run: 2,
+    max_rounds: 25,
+    cost_usd: 1.25,
     exit_code: 0,
     final_response: "The requested change is complete.",
   };
-  fs.writeFileSync(path.join(run, "logs", "report.json"), JSON.stringify(report), "utf-8");
-  fs.writeFileSync(
-    path.join(roleDir, "events.jsonl"),
-    `${JSON.stringify({ event: "manager_round_start", round_index: 1, active_role: "manager" })}\n`,
-    "utf-8",
-  );
-  fs.writeFileSync(path.join(roundDir, "manager_plan.txt"), "next_step: done", "utf-8");
-  fs.writeFileSync(path.join(roundDir, "final_response.txt"), "The requested change is complete.", "utf-8");
-  const state = new DashboardState(path.join(run, "logs"), { runsRoot: root, controlEnabled: false });
+  fs.writeFileSync(path.join(logDir, "report.json"), JSON.stringify(report), "utf-8");
 
   const snapshot = buildSnapshot(state, { run_id: "run-1" }) as Record<string, any>;
 
   assert.equal(snapshot.run.status, "completed");
   assert.equal(snapshot.run.completion_satisfied, true);
-  assert.equal(snapshot.run.completion_authority, "manager_with_role_auditors");
+  assert.equal(snapshot.run.completion_authority, "evaluator_contracts");
+  assert.equal(snapshot.run.report_status, "completed");
   assert.equal(snapshot.run.exit_code, 0);
+  assert.equal(snapshot.run.rounds_run, 2);
+  assert.equal(snapshot.run.cost_usd, 1.25);
   assert.equal(snapshot.run.final_response, "The requested change is complete.");
-  assert.equal(snapshot.rounds[0].final_response, "The requested change is complete.");
-  assert.equal(snapshot.active_round, null);
+  // A terminal run has nothing in flight, whatever phase.json still says.
+  assert.equal(snapshot.active_subtask, null);
   assert.equal(snapshot.active_role, null);
+  // The loop projection is still published so the plan tree stays browsable.
+  assert.equal(snapshot.loop.plan.title, "Fixture plan");
+  assert.equal(snapshot.mission.plan_path, "plan/plan.json");
+});
+
+test("an active snapshot names the subtask and role in flight", () => {
+  const tmp = tmpDir();
+  const { state } = fixture(tmp);
+
+  const snapshot = buildSnapshot(state, { run_id: "run-1" }) as Record<string, any>;
+
+  assert.equal(snapshot.run.status, "running");
+  assert.equal(snapshot.active_subtask, "build-api");
+  assert.equal(snapshot.active_role, "composer");
+  assert.equal(snapshot.loop.phase.phase, "executing");
 });
 
 test("active snapshot uses supervisor owner task before the first report", () => {
   const tmp = tmpDir();
   const root = path.join(tmp, "runs");
   const run = path.join(root, "run-1");
-  const roleDir = path.join(run, "logs", "role_management");
+  const roleDir = path.join(run, "lh_harness", "role_orchestration");
   fs.mkdirSync(roleDir, { recursive: true });
   fs.writeFileSync(
     path.join(roleDir, "events.jsonl"),
-    `${JSON.stringify({ event: "role_harness_start" })}\n`,
+    `${JSON.stringify({ event: "run_started" })}\n`,
     "utf-8",
   );
   new ControlBus(run).writeOwner({ run_id: "run-1", task: "owner task while active" });
-  const state = new DashboardState(path.join(run, "logs"), { runsRoot: root, controlEnabled: true });
+  const state = new DashboardState(path.join(run, "lh_harness"), { runsRoot: root, controlEnabled: true });
 
   const snapshot = buildSnapshot(state, { run_id: "run-1" }) as Record<string, any>;
 
@@ -214,11 +272,10 @@ test("active snapshot uses supervisor owner task before the first report", () =>
 test("svg artifacts are text attachments, not image documents", async () => {
   const tmp = tmpDir();
   const { root, state } = fixture(tmp);
-  const svg = path.join(root, "run-1", "logs", "role_management", "rounds", "round_001", "proof.svg");
-  fs.writeFileSync(svg, "<svg><script>window.pwned=true</script></svg>", "utf-8");
+  fs.writeFileSync(path.join(episodeDir(root), "proof.svg"), "<svg><script>window.pwned=true</script></svg>", "utf-8");
   const handle = await serve({ state, runsRoot: root, runId: "run-1" });
 
-  const raw = await fetch(`${handle.url}api/runs/run-1/rounds/1/artifacts/proof.svg/raw`);
+  const raw = await fetch(`${handle.url}api/runs/run-1/episodes/composer/1/artifacts/proof.svg/raw`);
   await raw.text();
 
   assert.equal(raw.status, 200);
@@ -231,7 +288,13 @@ test("legacy static dashboard routes are not registered", async () => {
   const { root, state } = fixture(tmp);
   const handle = await serve({ state, runsRoot: root, runId: "run-1" });
 
-  for (const legacy of ["api/state", "api/round/1", "api/round/1/manager_plan.txt"]) {
+  for (const legacy of [
+    "api/state",
+    "api/round/1",
+    "api/round/1/manager_plan.txt",
+    "api/runs/run-1/rounds/1/artifacts/manager_plan.txt",
+    "api/runs/run-1/rounds/1/trajectory/composer",
+  ]) {
     const response = await fetch(`${handle.url}${legacy}`);
     await response.text();
     assert.equal(response.status, 404, legacy);
@@ -278,21 +341,28 @@ test("api snapshot, replay, artifacts, instructions and approvals round-trip", a
 
   const snapshot = await (await fetch(`${handle.url}api/runs/run-1/snapshot`)).json();
   assert.equal(snapshot.run.status, "waiting_approval");
-  assert.equal(snapshot.active_round, 1);
+  assert.equal(snapshot.active_subtask, "build-api");
+  assert.equal(snapshot.active_role, "composer");
   assert.deepEqual(snapshot.controls, { can_inject: true, can_abort: false, can_resume: false });
 
   const events = (await (await fetch(`${handle.url}api/runs/run-1/events?limit=20`)).json()).events;
-  assert.deepEqual(events.map((item: any) => item.type), ["run.started", "round.manager.started"]);
+  assert.deepEqual(events.map((item: any) => item.type), ["run.started", "episode.started"]);
   const replay = (
     await (await fetch(`${handle.url}api/runs/run-1/events?after=${encodeURIComponent(events[0].event_id)}`)).json()
   ).events;
   assert.deepEqual(replay.map((item: any) => item.event_id), [events[1].event_id]);
 
-  const artifact = await fetch(`${handle.url}api/runs/run-1/rounds/1/artifacts/manager_plan.txt`);
-  assert.equal(artifact.status, 200);
-  assert.ok((await artifact.text()).includes("execute"));
+  const stateFile = await fetch(`${handle.url}api/runs/run-1/state/progress/build-api.md`);
+  assert.equal(stateFile.status, 200);
+  assert.ok((await stateFile.text()).includes("execute"));
 
-  const image = await fetch(`${handle.url}api/runs/run-1/rounds/1/artifacts/screenshot.png/raw`);
+  const listing = await (await fetch(`${handle.url}api/runs/run-1/state/plan?list=1`)).json();
+  assert.deepEqual(listing.entries, ["plan.json"]);
+
+  const artifacts = await (await fetch(`${handle.url}api/runs/run-1/episodes/composer/1/artifacts`)).json();
+  assert.deepEqual(artifacts.artifacts, ["screenshot.png"]);
+
+  const image = await fetch(`${handle.url}api/runs/run-1/episodes/composer/1/artifacts/screenshot.png/raw`);
   assert.equal(image.status, 200);
   assert.equal(image.headers.get("content-type"), "image/png");
   assert.deepEqual(
@@ -300,12 +370,14 @@ test("api snapshot, replay, artifacts, instructions and approvals round-trip", a
     Buffer.from("\x89PNG\r\nfixture-image", "latin1"),
   );
 
-  const traversalRaw = await fetch(`${handle.url}api/runs/run-1/rounds/1/artifacts/%2E%2E/screenshot.png/raw`);
+  const traversalRaw = await fetch(
+    `${handle.url}api/runs/run-1/episodes/composer/1/artifacts/%2E%2E/screenshot.png/raw`,
+  );
   await traversalRaw.text();
   assert.ok([404, 422].includes(traversalRaw.status));
-  const traversalText = await fetch(`${handle.url}api/runs/run-1/rounds/1/artifacts/%2E%2E`);
-  await traversalText.text();
-  assert.ok([404, 422].includes(traversalText.status));
+  const traversalState = await fetch(`${handle.url}api/runs/run-1/state/%2E%2E/lh_harness/report.json`);
+  await traversalState.text();
+  assert.ok([404, 422].includes(traversalState.status));
 
   const queued = await fetch(`${handle.url}api/runs/run-1/instructions`, {
     method: "POST",
@@ -339,18 +411,17 @@ test("api serves binary artifacts inline", async () => {
   const tmp = tmpDir();
   const { root, state } = fixture(tmp);
   const screenshot = Buffer.from("\x89PNG\r\n\x1a\n\x00binary-screenshot", "latin1");
-  const roundDir = path.join(root, "run-1", "logs", "role_management", "rounds", "round_001");
-  fs.writeFileSync(path.join(roundDir, "screenshot.png"), screenshot);
+  fs.writeFileSync(path.join(episodeDir(root), "screenshot.png"), screenshot);
   const handle = await serve({ state, runsRoot: root, runId: "run-1" });
 
-  const artifact = await fetch(`${handle.url}api/runs/run-1/rounds/1/artifacts/screenshot.png/raw`);
+  const artifact = await fetch(`${handle.url}api/runs/run-1/episodes/composer/1/artifacts/screenshot.png/raw`);
 
   assert.equal(artifact.status, 200);
   assert.equal(artifact.headers.get("content-type"), "image/png");
   assert.ok((artifact.headers.get("content-disposition") || "").startsWith("inline;"));
   assert.deepEqual(Buffer.from(await artifact.arrayBuffer()), screenshot);
 
-  const traversal = await fetch(`${handle.url}api/runs/run-1/rounds/1/artifacts/%2E%2E/raw`);
+  const traversal = await fetch(`${handle.url}api/runs/run-1/episodes/composer/1/artifacts/%2E%2E/raw`);
   await traversal.text();
   assert.equal(traversal.status, 404);
 });
@@ -358,13 +429,13 @@ test("api serves binary artifacts inline", async () => {
 test("api does not execute html artifacts", async () => {
   const tmp = tmpDir();
   const { root, state } = fixture(tmp);
-  const html = path.join(root, "run-1", "logs", "role_management", "rounds", "round_001", "result.html");
-  fs.writeFileSync(html, "<script>window.pwned = true</script>", "utf-8");
+  fs.writeFileSync(path.join(episodeDir(root), "result.html"), "<script>window.pwned = true</script>", "utf-8");
+  writeState(path.join(root, "run-1", "state"), "evidence/build-api/result.html", "<script>window.pwned = true</script>");
   const handle = await serve({ state, runsRoot: root, runId: "run-1" });
 
-  const raw = await fetch(`${handle.url}api/runs/run-1/rounds/1/artifacts/result.html/raw`);
+  const raw = await fetch(`${handle.url}api/runs/run-1/episodes/composer/1/artifacts/result.html/raw`);
   await raw.text();
-  const text = await fetch(`${handle.url}api/runs/run-1/rounds/1/artifacts/result.html`);
+  const text = await fetch(`${handle.url}api/runs/run-1/state/evidence/build-api/result.html`);
   await text.text();
 
   assert.equal(raw.status, 200);
@@ -456,18 +527,18 @@ test("websocket starts with a snapshot and replay", async () => {
     assert.equal(second.kind, "event");
     assert.notEqual((first.data as any).event_id, (second.data as any).event_id);
 
-    const eventsPath = path.join(root, "run-1", "logs", "role_management", "events.jsonl");
+    const eventsPath = path.join(root, "run-1", "lh_harness", "role_orchestration", "events.jsonl");
     setTimeout(() => {
       fs.appendFileSync(
         eventsPath,
-        `${JSON.stringify({ ts: 3, event: "manager_round_done", round_index: 1 })}\n`,
+        `${JSON.stringify({ ts: 3, event: "episode_finished", role: "composer", round: 1 })}\n`,
         "utf-8",
       );
     }, 100);
     const liveEvent = await next();
     const liveSnapshot = await next();
     assert.equal(liveEvent.kind, "event");
-    assert.equal((liveEvent.data as any).type, "round.manager.completed");
+    assert.equal((liveEvent.data as any).type, "episode.completed");
     assert.equal(liveSnapshot.kind, "snapshot");
   } finally {
     socket.close();

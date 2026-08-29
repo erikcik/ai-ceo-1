@@ -31,6 +31,8 @@ export type Capability = {
   defaultOn?: boolean;
   /** Docs shown next to the toggle. */
   note?: string;
+  /** How an agent invokes this capability; injected into role prompts. */
+  promptHint?: string;
 };
 
 export const CAPABILITIES: readonly Capability[] = [
@@ -41,7 +43,8 @@ export const CAPABILITIES: readonly Capability[] = [
     envKeys: [],
     alwaysOn: true,
     defaultOn: true,
-    note: "Configured by `lh-harness start`; baked into the container image.",
+    note: "Configured by `lh-harness-eray start`; baked into the container image.",
+    promptHint: "browser tools are available through the configured MCP server (navigate, click, type, screenshot).",
   },
   {
     id: "github",
@@ -50,6 +53,8 @@ export const CAPABILITIES: readonly Capability[] = [
     envKeys: ["GH_TOKEN", "GITHUB_TOKEN"],
     defaultOn: false,
     note: "Uses a scoped token; a push is not reversible.",
+    promptHint:
+      "GH_TOKEN and GITHUB_TOKEN are set; `gh` and HTTPS git remotes authenticate with them automatically (for git, use `gh auth setup-git` or a `https://x-access-token:${GH_TOKEN}@github.com/...` remote).",
   },
   {
     id: "vercel",
@@ -58,6 +63,8 @@ export const CAPABILITIES: readonly Capability[] = [
     envKeys: ["VERCEL_TOKEN"],
     defaultOn: false,
     note: "A deploy is public; consider limiting the token to one project.",
+    promptHint:
+      'VERCEL_TOKEN is set; deploy non-interactively with `vercel deploy --prod --yes --token "$VERCEL_TOKEN"` (use `npx -y vercel` if the `vercel` binary is not on PATH). Never run `vercel login`.',
   },
   {
     id: "higgsfield",
@@ -72,6 +79,7 @@ export const CAPABILITIES: readonly Capability[] = [
     },
     defaultOn: false,
     note: "Needs a Higgsfield API key and available credits.",
+    promptHint: "generate media through the `higgsfield` MCP server tools; HIGGSFIELD_API_KEY is set for it.",
   },
   {
     id: "email",
@@ -80,6 +88,8 @@ export const CAPABILITIES: readonly Capability[] = [
     envKeys: ["RESEND_API_KEY", "LH_EMAIL_FROM"],
     defaultOn: false,
     note: "Email is irreversible; keep an 'ask before sending' rule in the task.",
+    promptHint:
+      "send through the Resend HTTP API using RESEND_API_KEY (from-address in LH_EMAIL_FROM). Email is irreversible; follow any ask-before-sending rule in the task.",
   },
 ];
 
@@ -168,6 +178,72 @@ export function writeRunMcpConfig(
   return target;
 }
 
+/**
+ * How the supervisor tells the worker which capabilities the operator granted.
+ * The worker cannot re-derive this from env presence alone: a granted
+ * capability may lack its credential (report it as blocked, not invisible).
+ */
+export const GRANTED_CAPABILITIES_ENV = "LH_HARNESS_GRANTED_CAPABILITIES";
+
+/** Parse the supervisor's granted-capability list; null when the var is unset. */
+export function parseGrantedCapabilities(value: string | null | undefined): string[] | null {
+  if (value === null || value === undefined) return null;
+  const ids = String(value)
+    .split(",")
+    .map((item) => item.trim())
+    .filter((item) => item);
+  return resolveCapabilities(ids);
+}
+
+/**
+ * Fallback for unsupervised runs (direct `lh-harness-eray run`), where no gating
+ * happened: every capability whose credential is present in the env is
+ * effectively available, plus the always-on ones.
+ */
+export function deriveCapabilitiesFromEnv(env: NodeJS.ProcessEnv): string[] {
+  return CAPABILITIES.filter(
+    (cap) => cap.alwaysOn || (cap.envKeys.length > 0 && cap.envKeys.some((key) => Boolean(env[key]))),
+  ).map((cap) => cap.id);
+}
+
+/**
+ * The "Provisioned external tools" prompt section for the given grant set.
+ * Injected into manager/executor/auditor prompts so agents know which
+ * integrations the operator already provisioned instead of asking the user
+ * for credentials that are sitting in their environment.
+ */
+export function capabilityPromptNote(
+  selected: readonly string[],
+  env: NodeJS.ProcessEnv,
+  options?: { readOnly?: boolean },
+): string {
+  const selectedSet = new Set(selected);
+  const lines: string[] = [];
+  const missing: string[] = [];
+  for (const cap of CAPABILITIES) {
+    if (!selectedSet.has(cap.id)) continue;
+    const credentialed = cap.envKeys.length === 0 || cap.envKeys.some((key) => Boolean(env[key]));
+    if (!credentialed) {
+      lines.push(
+        `- ${cap.label}: granted by the operator, but its credential is not configured. Treat it as unavailable and report the blocker instead of improvising access.`,
+      );
+      continue;
+    }
+    lines.push(`- ${cap.label}: ${cap.promptHint ?? cap.summary}`);
+  }
+  for (const cap of CAPABILITIES) {
+    if (!selectedSet.has(cap.id)) missing.push(cap.label);
+  }
+  if (!lines.length) return "";
+  const rules = options?.readOnly
+    ? "These integrations are for read-only verification here (inspect deployments, repos, or sent state); never create, deploy, push, send, or mutate through them, and never print credential values."
+    : "These credentials are already provisioned by the operator. Never ask the user to paste a token or log in for them, never print credential values into output or files, and never run interactive login flows.";
+  const notGranted = missing.length
+    ? `\nNot granted this run: ${missing.join(", ")}. Do not assume or request those credentials mid-run; if one is genuinely required, report it so the operator can be asked.`
+    : "";
+  return `Provisioned external tools (operator-granted for this run):\n${lines.join("\n")}\n${rules}${notGranted}`;
+}
+
 /** Which selected capabilities have their credentials present in this env. */
 export function capabilityStatus(env: NodeJS.ProcessEnv): { id: string; label: string; ready: boolean; alwaysOn: boolean }[] {
   return CAPABILITIES.map((cap) => ({
@@ -206,7 +282,18 @@ export function discoverHostSecrets(): Record<string, string> {
   try {
     const vercelAuth = path.join(os.homedir(), "Library", "Application Support", "com.vercel.cli", "auth.json");
     const parsed = JSON.parse(fs.readFileSync(vercelAuth, "utf-8"));
-    if (parsed?.token) found.VERCEL_TOKEN = String(parsed.token);
+    // The Vercel CLI stores a short-lived OAuth token (hours) next to an
+    // `expiresAt` stamp (seconds or milliseconds). Copying an expired one
+    // into secrets.env plants a credential that is guaranteed to 403.
+    const expiresAtRaw = Number(parsed?.expiresAt);
+    const expiresAtMs =
+      Number.isFinite(expiresAtRaw) && expiresAtRaw > 0
+        ? expiresAtRaw > 1e12
+          ? expiresAtRaw
+          : expiresAtRaw * 1000
+        : null;
+    const expired = expiresAtMs !== null && expiresAtMs <= Date.now();
+    if (parsed?.token && !expired) found.VERCEL_TOKEN = String(parsed.token);
   } catch {
     /* not logged into vercel */
   }

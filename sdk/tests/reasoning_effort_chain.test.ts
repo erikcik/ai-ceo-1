@@ -18,16 +18,7 @@ import {
   resolveRoleReasoningEffort,
 } from "../src/config.js";
 
-const ROLES = [
-  "manager",
-  "executor",
-  "gui_executor",
-  "cli_executor",
-  "auditor",
-  "gui_auditor",
-  "cli_auditor",
-  "final_response",
-];
+const ROLES = ["prompt_tailor", "planner", "rubric", "composer", "evaluator", "final_response"];
 
 function args(values: Record<string, string> = {}): RoleArgs {
   const base: RoleArgs = { agent: null, model: null, reasoning_effort: null };
@@ -47,78 +38,86 @@ function tmpConfig(body: string): string {
 }
 
 test("a role agent falls back to the global value", () => {
-  assert.equal(resolveRoleOption(args({ agent: "claude_code" }), "gui_executor", "agent"), "claude_code");
+  assert.equal(resolveRoleOption(args({ agent: "claude_code" }), "composer", "agent"), "claude_code");
 });
 
 test("a role agent prefers the nearest override", () => {
-  const values = args({ agent: "claude_code", executor_agent: "other_backend" });
-  assert.equal(resolveRoleOption(values, "gui_executor", "agent"), "other_backend");
-  assert.equal(resolveRoleOption(values, "manager", "agent"), "claude_code");
+  const values = args({ agent: "claude_code", planner_agent: "other_backend" });
+  assert.equal(resolveRoleOption(values, "prompt_tailor", "agent"), "other_backend");
+  assert.equal(resolveRoleOption(values, "composer", "agent"), "claude_code");
 });
 
-test("final_response inherits from the manager", () => {
-  const values = args({ agent: "claude_code", manager_agent: "manager_backend" });
-  assert.equal(resolveRoleOption(values, "final_response", "agent"), "manager_backend");
+test("final_response follows the planner and rubric follows the evaluator", () => {
+  const values = args({
+    agent: "claude_code",
+    planner_agent: "planner_backend",
+    evaluator_agent: "evaluator_backend",
+  });
+  assert.equal(resolveRoleOption(values, "final_response", "agent"), "planner_backend");
+  assert.equal(resolveRoleOption(values, "prompt_tailor", "agent"), "planner_backend");
+  assert.equal(resolveRoleOption(values, "rubric", "agent"), "evaluator_backend");
 });
 
 test("a role model falls back to the global value", () => {
-  assert.equal(resolveRoleModel(args({ model: "claude-opus-5" }), "cli_auditor"), "claude-opus-5");
+  assert.equal(resolveRoleModel(args({ model: "claude-opus-5" }), "evaluator"), "claude-opus-5");
 });
 
 test("a role model does not cross an explicit backend switch", () => {
   // A Claude-only role must never inherit the global model merely because its
   // agent was overridden.
-  const values = args({ model: "claude-opus-5", manager_agent: "other_backend" });
+  const values = args({ model: "claude-opus-5", planner_agent: "other_backend" });
 
-  assert.equal(resolveRoleModel(values, "manager"), null);
-  assert.equal(resolveRoleModel(values, "gui_executor"), "claude-opus-5");
+  assert.equal(resolveRoleModel(values, "planner"), null);
+  assert.equal(resolveRoleModel(values, "prompt_tailor"), null);
+  assert.equal(resolveRoleModel(values, "composer"), "claude-opus-5");
 });
 
 test("a model set at or below the agent boundary still wins", () => {
   const values = args({
     model: "claude-opus-5",
-    manager_agent: "other_backend",
-    manager_model: "other-model",
+    planner_agent: "other_backend",
+    planner_model: "other-model",
   });
 
-  assert.equal(resolveRoleModel(values, "manager"), "other-model");
+  assert.equal(resolveRoleModel(values, "planner"), "other-model");
+  assert.equal(resolveRoleModel(values, "prompt_tailor"), "other-model");
 });
 
 test("a role effort falls back to the global value", () => {
-  assert.equal(resolveRoleReasoningEffort(args({ reasoning_effort: "high" }), "gui_executor", "claude_code"), "high");
+  assert.equal(resolveRoleReasoningEffort(args({ reasoning_effort: "high" }), "composer", "claude_code"), "high");
 });
 
 test("a role effort prefers the nearest override", () => {
-  const values = args({ reasoning_effort: "low", executor_reasoning_effort: "max" });
+  const values = args({ reasoning_effort: "low", evaluator_reasoning_effort: "max" });
 
-  assert.equal(resolveRoleReasoningEffort(values, "gui_executor", "claude_code"), "max");
-  assert.equal(resolveRoleReasoningEffort(values, "manager", "claude_code"), "low");
+  assert.equal(resolveRoleReasoningEffort(values, "rubric", "claude_code"), "max");
+  assert.equal(resolveRoleReasoningEffort(values, "composer", "claude_code"), "low");
 });
 
 test("a role effort does not cross an explicit backend switch", () => {
   // Effort tiers are backend-specific, so inheriting one across a switch would
   // send a tier the selected backend rejects or silently drops.
-  const values = args({ reasoning_effort: "ultra", manager_agent: "other_backend" });
+  const values = args({ reasoning_effort: "ultra", planner_agent: "other_backend" });
 
-  assert.equal(resolveRoleReasoningEffort(values, "manager", "claude_code"), null);
-  assert.equal(resolveRoleReasoningEffort(values, "gui_executor", "claude_code"), "ultra");
+  assert.equal(resolveRoleReasoningEffort(values, "planner", "claude_code"), null);
+  assert.equal(resolveRoleReasoningEffort(values, "composer", "claude_code"), "ultra");
 });
 
 test("a role effort is dropped for a backend without the switch", () => {
   const values = args({ reasoning_effort: "high" });
 
-  assert.equal(resolveRoleReasoningEffort(values, "manager", "deepseek_harness"), null);
+  assert.equal(resolveRoleReasoningEffort(values, "planner", "deepseek_harness"), null);
 });
 
 test("the project config accepts a global and a per-role effort", () => {
   const config = tmpConfig(
-    ["[run]", 'reasoning_effort = "high"', "[run.roles.manager]", 'reasoning_effort = "xhigh"'].join("\n"),
+    ["[run]", 'reasoning_effort = "high"', "[run.roles.planner]", 'reasoning_effort = "xhigh"'].join("\n"),
   );
 
   const defaults = loadRunDefaults(config);
 
   assert.equal(defaults.reasoning_effort, "high");
-  assert.equal(defaults.manager_reasoning_effort, "xhigh");
+  assert.equal(defaults.planner_reasoning_effort, "xhigh");
 });
 
 test("the project config rejects a malformed effort", () => {

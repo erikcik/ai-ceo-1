@@ -31,8 +31,8 @@ after(() => {
   for (const dir of roots) fs.rmSync(dir, { recursive: true, force: true });
 });
 
-test("manager and final_response get the no-side-effect deny list", () => {
-  for (const role of ["manager", "final_response"]) {
+test("prompt_tailor and final_response get the no-side-effect deny list", () => {
+  for (const role of ["prompt_tailor", "final_response"]) {
     const policy = policyForRole(role);
     assert.equal(policy.permission_mode, "bypassPermissions");
     assert.deepEqual([...policy.disallowed_tools], [
@@ -42,31 +42,44 @@ test("manager and final_response get the no-side-effect deny list", () => {
       "NotebookEdit",
       "Agent",
       "mcp__*",
+      "WebSearch",
+      "WebFetch",
     ]);
     assert.equal(policy.load_computer_mcp, false);
     assert.equal(policy.workspace_read_only, true);
+    assert.equal(policy.subagents, false);
   }
 });
 
-test("executors only lose the Agent tool and may load the computer MCP", () => {
-  for (const role of ["gui_executor", "cli_executor"]) {
+test("planner and composer keep every tool and may load the computer MCP", () => {
+  for (const role of ["planner", "composer"]) {
     const policy = policyForRole(role);
-    assert.deepEqual([...policy.disallowed_tools], ["Agent"]);
+    assert.deepEqual([...policy.disallowed_tools], []);
     assert.equal(policy.load_computer_mcp, true);
     assert.equal(policy.workspace_read_only, false);
+    assert.equal(policy.subagents, true);
+    assert.equal(isAuditorRole(role), false);
   }
 });
 
-test("auditors lose the write tools but keep Bash — hence the snapshot guard", () => {
-  for (const role of ["gui_auditor", "cli_auditor", "auditor_format_repair"]) {
-    const policy = policyForRole(role);
-    assert.deepEqual([...policy.disallowed_tools], ["Write", "Edit", "NotebookEdit", "Agent"]);
-    assert.ok(!policy.disallowed_tools.includes("Bash"));
-    assert.equal(policy.load_computer_mcp, true);
-    assert.equal(policy.workspace_read_only, true);
-    assert.equal(isAuditorRole(role), true);
-  }
-  assert.equal(isAuditorRole("cli_executor"), false);
+test("the rubric agent loses Bash and the MCP servers but keeps subagents", () => {
+  const policy = policyForRole("rubric");
+  assert.deepEqual([...policy.disallowed_tools], ["Bash", "mcp__*"]);
+  assert.equal(policy.load_computer_mcp, false);
+  assert.equal(policy.workspace_read_only, false);
+  assert.equal(policy.subagents, true);
+  assert.equal(isAuditorRole("rubric"), false);
+});
+
+test("the evaluator keeps every tool — hence the snapshot guard", () => {
+  const policy = policyForRole("evaluator");
+  assert.deepEqual([...policy.disallowed_tools], []);
+  assert.ok(!policy.disallowed_tools.includes("Bash"));
+  assert.equal(policy.load_computer_mcp, true);
+  assert.equal(policy.workspace_read_only, true);
+  assert.equal(policy.subagents, true);
+  assert.equal(isAuditorRole("evaluator"), true);
+  assert.equal(isAuditorRole("composer"), false);
 });
 
 test("an unknown role is rejected with the verbatim message", () => {

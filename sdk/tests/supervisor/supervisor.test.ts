@@ -88,18 +88,18 @@ test("worker command forwards the selected agent, models and task indirection", 
       agent: "claude_code",
       model: "claude-custom-test",
       roleConfigs: {
-        manager: { agent: "codex", model: "gpt-manager-test" },
-        executor: { agent: "claude_code", model: "claude-executor-test" },
-        auditor: { agent: "codex", model: "gpt-auditor-test" },
+        planner: { agent: "codex", model: "gpt-planner-test" },
+        composer: { agent: "claude_code", model: "claude-composer-test" },
+        evaluator: { agent: "codex", model: "gpt-evaluator-test" },
       },
     });
 
     const owner = created.owner as Record<string, unknown>;
     assert.equal(owner.agent, "claude_code");
     assert.equal(owner.model, "claude-custom-test");
-    assert.deepEqual((owner.role_configs as Record<string, unknown>).auditor, {
+    assert.deepEqual((owner.role_configs as Record<string, unknown>).evaluator, {
       agent: "codex",
-      model: "gpt-auditor-test",
+      model: "gpt-evaluator-test",
     });
     assert.equal(commands.length, 1);
     const command = commands[0];
@@ -109,12 +109,12 @@ test("worker command forwards the selected agent, models and task indirection", 
     for (const flag of [
       "--agent=claude_code",
       "--model=claude-custom-test",
-      "--manager-agent=codex",
-      "--manager-model=gpt-manager-test",
-      "--executor-agent=claude_code",
-      "--executor-model=claude-executor-test",
-      "--auditor-agent=codex",
-      "--auditor-model=gpt-auditor-test",
+      "--planner-agent=codex",
+      "--planner-model=gpt-planner-test",
+      "--composer-agent=claude_code",
+      "--composer-model=claude-composer-test",
+      "--evaluator-agent=codex",
+      "--evaluator-model=gpt-evaluator-test",
     ]) {
       assert.ok(command.includes(flag), `missing ${flag}`);
     }
@@ -219,7 +219,7 @@ test("finalize_attached_run persists terminal state before --keep-dashboard", ()
     runId: "run-1",
     pid: process.pid,
     task: "finish",
-    command: ["lh-harness", "run"],
+    command: ["lh-harness-eray", "run"],
   });
 
   const status = supervisor.finalizeAttachedRun("run-1", {

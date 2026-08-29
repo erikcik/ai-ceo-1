@@ -46,7 +46,7 @@ export interface ValidationResultSummary {
   exitCode: number | null;
   durationMs: number | null;
   trajectoryIndex: number;
-  roundIndex: number;
+  episode: number;
   role: string;
   stepIndex: number;
 }
@@ -869,7 +869,7 @@ function projectValidations(steps: readonly StepRef[], maxItems: number, maxSumm
       : validationSummary(detected, evidence, status, maxSummaryChars);
     const label = detected.targets.length === 1 ? detected.targets[0] : detected.targets.join(' + ');
     items.push({
-      id: `${ref.trajectory.run_id || 'run'}:${ref.trajectory.round_index}:${ref.trajectory.role || 'role'}:${id || ref.stepIndex}`,
+      id: `${ref.trajectory.run_id || 'run'}:${ref.trajectory.episode ?? ref.trajectory.round_index ?? 0}:${ref.trajectory.role || 'role'}:${id || ref.stepIndex}`,
       label,
       targets: detected.targets,
       operations: detected.operations,
@@ -883,7 +883,7 @@ function projectValidations(steps: readonly StepRef[], maxItems: number, maxSumm
       exitCode: evidence?.exitCode ?? null,
       durationMs: evidence?.durationMs ?? null,
       trajectoryIndex: ref.trajectoryIndex,
-      roundIndex: ref.trajectory.round_index,
+      episode: ref.trajectory.episode ?? ref.trajectory.round_index ?? 0,
       role: ref.trajectory.role,
       stepIndex: ref.stepIndex,
     });

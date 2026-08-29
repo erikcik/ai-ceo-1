@@ -61,7 +61,7 @@ function bench(commandTemplate: string, hiddenPaths: string[] = []) {
 
 test("additional directories are hard-rejected with the verbatim message", () => {
   assert.throws(
-    () => new ClaudeCodeAdapter({ role: "cli_executor", addDirs: ["/etc"] }),
+    () => new ClaudeCodeAdapter({ role: "composer", addDirs: ["/etc"] }),
     (err: Error) => err.message === ADD_DIRS_REJECTION_MESSAGE,
   );
   assert.throws(
@@ -83,31 +83,31 @@ test("the add-dir environment overrides are rejected the same way", () => {
 });
 
 test("the episode never asks the SDK for directories beyond the workspace", () => {
-  const plan = buildQueryOptions({ workspacePath: "/tmp/ws", role: "cli_executor" });
+  const plan = buildQueryOptions({ workspacePath: "/tmp/ws", role: "composer" });
   assert.ok(!("additionalDirectories" in plan.sdkOptions));
   assert.equal(plan.sdkOptions.cwd, "/tmp/ws");
 });
 
 test("auto memory and prompt history are disabled and the role is announced", () => {
-  const plan = buildQueryOptions({ role: "gui_auditor", env: {} });
+  const plan = buildQueryOptions({ role: "evaluator", env: {} });
   assert.equal(plan.envAdditions.CLAUDE_CODE_DISABLE_AUTO_MEMORY, "1");
   assert.equal(plan.envAdditions.CLAUDE_CODE_SKIP_PROMPT_HISTORY, "1");
-  assert.equal(plan.envAdditions.LH_HARNESS_CLAUDE_ROLE, "gui_auditor");
-  // Auditor-only hardening: no `.git/index.lock`, no pager blocking the episode.
+  assert.equal(plan.envAdditions.LH_HARNESS_CLAUDE_ROLE, "evaluator");
+  // Evaluator-only hardening: no `.git/index.lock`, no pager blocking the episode.
   assert.equal(plan.envAdditions.GIT_OPTIONAL_LOCKS, "0");
   assert.equal(plan.envAdditions.GIT_PAGER, "cat");
   assert.equal(plan.envAdditions.PAGER, "cat");
 });
 
 test("non-auditor roles do not get the git/pager hardening", () => {
-  const plan = buildQueryOptions({ role: "cli_executor", env: {} });
+  const plan = buildQueryOptions({ role: "composer", env: {} });
   assert.ok(!("GIT_OPTIONAL_LOCKS" in plan.envAdditions));
   assert.ok(!("GIT_PAGER" in plan.envAdditions));
   assert.ok(!("PAGER" in plan.envAdditions));
 });
 
 test("the session inherits nothing from any settings file or CLAUDE.md", () => {
-  const plan = buildQueryOptions({ role: "manager", env: {} });
+  const plan = buildQueryOptions({ role: "prompt_tailor", env: {} });
   assert.deepEqual(plan.sdkOptions.settingSources, []);
   assert.deepEqual(plan.sdkOptions.systemPrompt, { type: "preset", preset: "claude_code" });
   assert.equal(plan.sdkOptions.strictMcpConfig, true);
@@ -167,7 +167,7 @@ test("no hidden paths means no notice at all", () => {
 
 test("harness-owned paths become Read/Edit deny rules on the command line", () => {
   const hidden = tmpRoot();
-  const plan = buildQueryOptions({ role: "cli_auditor", hiddenPaths: [hidden], env: {} });
+  const plan = buildQueryOptions({ role: "rubric", hiddenPaths: [hidden], env: {} });
   const anchored = hidden.replace(/^\/+/, "");
   assert.deepEqual(plan.pathDenyRules, [
     `Read(//${anchored})`,
@@ -178,7 +178,7 @@ test("harness-owned paths become Read/Edit deny rules on the command line", () =
   for (const rule of plan.pathDenyRules) assert.ok(plan.commandTemplate.includes(rule));
   // The SDK forwards the list to the same `--disallowedTools` flag, so the
   // path deny rules apply for real, exactly as the Python argv did.
-  assert.deepEqual(plan.sdkOptions.disallowedTools, ["Write", "Edit", "NotebookEdit", "Task", ...plan.pathDenyRules]);
+  assert.deepEqual(plan.sdkOptions.disallowedTools, ["Bash", "mcp__*", ...plan.pathDenyRules]);
 });
 
 test("the episode command is wrapped in a cd and the prompt arrives on stdin", async () => {

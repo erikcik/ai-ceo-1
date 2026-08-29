@@ -1,4 +1,14 @@
-import type { ArtifactList, EventEnvelope, RunSummary, Snapshot } from '../../core/src/types';
+import type {
+  EpisodeArtifactList,
+  EventEnvelope,
+  LoopRole,
+  RunSummary,
+  Snapshot,
+  StateDirListing,
+} from '../../core/src/types';
+import type { TrajectoryView } from '../../core/src/trajectoryView';
+
+export type { TrajectoryStep, TrajectoryView } from '../../core/src/trajectoryView';
 
 const WEB_TOKEN_KEY = 'lh-web-token';
 let volatileWebToken = '';
@@ -196,56 +206,86 @@ export function fetchEvents(runId: string, after: string | null = null, limit = 
   return getJson<EventReplay>(`/api/runs/${encodeURIComponent(runId)}/events?${query}`);
 }
 
-export function fetchArtifacts(runId: string, round: number): Promise<ArtifactList> {
-  return getJson<ArtifactList>(`/api/runs/${encodeURIComponent(runId)}/rounds/${round}/artifacts`);
+// ---------------------------------------------------------------------------
+// Run state files: `GET /api/runs/{id}/state/{path}`
+//
+// Everything the loop writes for the operator lives under the run's `state/`
+// folder: `plan/PLAN.md`, `rubrics/<id>.md`, `progress/<id>.md`,
+// `evaluations/<id>/r1.md`, `context/<id>-r1.md`, `research/<file>.md`,
+// `prompts/<role>.md`, `evidence/<id>/<file>`.
+// ---------------------------------------------------------------------------
+
+function stateBase(runId: string, path: string): string {
+  const segments = String(path).split('/').filter((part) => part !== '').map(encodeURIComponent);
+  return `/api/runs/${encodeURIComponent(runId)}/state/${segments.join('/')}`;
 }
 
-export interface TrajectoryView {
-  round_index: number;
-  role: string;
-  step_count: number;
-  raw_chars: number;
-  steps: TrajectoryStep[];
-  warning?: string;
-  steps_truncated?: boolean;
+/** URL of a state file. `raw` serves bytes (images and video render inline). */
+export function stateFileUrl(runId: string, path: string, options: { raw?: boolean } = {}): string {
+  return `${stateBase(runId, path)}${options.raw ? '?raw=1' : ''}`;
 }
 
-export interface TrajectoryStep extends Record<string, unknown> {
-  kind?: string;
-  type?: string;
-  text?: string;
-  input?: Record<string, unknown>;
-  images?: string[];
-  image?: string;
-  image_url?: string;
-  imageUrl?: string;
-  has_image?: boolean;
-  is_error?: boolean;
-  status?: string;
-  exit_code?: number | string | null;
-  exitCode?: number | string | null;
-}
-
-export function fetchTrajectory(runId: string, round: number, role: string): Promise<TrajectoryView> {
-  return getJson<TrajectoryView>(`/api/runs/${encodeURIComponent(runId)}/rounds/${round}/trajectory/${encodeURIComponent(role)}`);
-}
-
-export async function fetchArtifact(runId: string, round: number, name: string): Promise<string> {
-  const response = await fetch(`/api/runs/${encodeURIComponent(runId)}/rounds/${round}/artifacts/${encodeURIComponent(name)}`, { headers: authHeaders() });
+/** Text of one state file. */
+export async function fetchStateFile(runId: string, path: string): Promise<string> {
+  const response = await fetch(stateBase(runId, path), { headers: authHeaders() });
   if (!response.ok) throw await responseError(response);
   return response.text();
 }
 
-export function artifactRawUrl(runId: string, round: number, name: string): string {
-  return `/api/runs/${encodeURIComponent(runId)}/rounds/${round}/artifacts/${encodeURIComponent(name)}/raw`;
+/** Directory listing under `state/`, e.g. `plan/revisions`. */
+export function listStateDir(runId: string, path: string): Promise<StateDirListing> {
+  return getJson<StateDirListing>(`${stateBase(runId, path)}?list=1`);
 }
 
-/** Load a same-origin image with bearer headers without putting the token in a URL. */
-export async function fetchImageSource(source: string): Promise<string> {
+// ---------------------------------------------------------------------------
+// Episodes: `GET /api/runs/{id}/episodes/{role}/{seq}/...`
+//
+// `role` is one of prompt_tailor | planner | rubric | composer | evaluator |
+// final_response and `seq` is the `epNNN` number from the episode index.
+// ---------------------------------------------------------------------------
+
+function episodeBase(runId: string, role: string, seq: number): string {
+  return `/api/runs/${encodeURIComponent(runId)}/episodes/${encodeURIComponent(role)}/${Math.max(1, Math.floor(seq))}`;
+}
+
+export function fetchEpisodeTrajectory(runId: string, role: string, seq: number): Promise<TrajectoryView> {
+  return getJson<TrajectoryView>(`${episodeBase(runId, role, seq)}/trajectory`);
+}
+
+export function fetchEpisodeArtifacts(runId: string, role: string, seq: number): Promise<EpisodeArtifactList> {
+  return getJson<EpisodeArtifactList>(`${episodeBase(runId, role, seq)}/artifacts`);
+}
+
+export function episodeArtifactUrl(runId: string, role: string, seq: number, name: string): string {
+  return `${episodeBase(runId, role, seq)}/artifacts/${encodeURIComponent(name)}/raw`;
+}
+
+/** Load a same-origin asset with bearer headers without putting the token in a URL. */
+export async function fetchObjectUrl(source: string): Promise<string> {
   if (!source.startsWith('/api/')) return source;
   const response = await fetch(source, { headers: authHeaders() });
   if (!response.ok) throw await responseError(response);
   return URL.createObjectURL(await response.blob());
+}
+
+export const fetchImageSource = fetchObjectUrl;
+
+/**
+ * Save an API-served file locally.
+ *
+ * A plain `<a href download>` cannot carry the bearer token a remote
+ * deployment requires, so the bytes are fetched with the auth header and the
+ * download is driven from the resulting object URL.
+ */
+export async function downloadApiFile(source: string, name: string): Promise<void> {
+  const objectUrl = await fetchObjectUrl(source);
+  const anchor = document.createElement('a');
+  anchor.href = objectUrl;
+  anchor.download = name;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  if (objectUrl !== source) window.setTimeout(() => URL.revokeObjectURL(objectUrl), 30_000);
 }
 
 export async function postInstruction(runId: string, instructions: string, requestKey = idempotencyKey('instruction')): Promise<void> {
@@ -275,8 +315,11 @@ export async function createRun(input: {
   task: string;
   agent: string;
   model?: string;
-  roles?: Partial<Record<'manager' | 'executor' | 'auditor', Partial<RoleRuntimeConfig>>>;
+  roles?: Partial<Record<LoopRole, Partial<RoleRuntimeConfig>>>;
+  /** External-tool ids the operator granted this run. */
+  capabilities?: string[];
   workspace?: string;
+  /** Ceiling on composer episodes. */
   max_rounds?: number;
   prompt_language?: 'en';
 }, requestKey = idempotencyKey('create')): Promise<{ id: string }> {

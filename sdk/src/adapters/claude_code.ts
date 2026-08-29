@@ -79,6 +79,15 @@ export const ADD_DIRS_REJECTION_MESSAGE =
   "Claude Code role isolation does not allow additional directories; " +
   "put task files inside the run workspace instead.";
 
+/** Per-episode additions the loop passes on top of the role's static plan. */
+export type EpisodeQueryOptions = {
+  signal?: AbortSignal;
+  hooks?: unknown;
+  agents?: unknown;
+  systemPromptAppend?: string;
+  maxBudgetUsd?: number;
+};
+
 export type ClaudeCodeAdapterOptions = {
   model?: string;
   apiKey?: string | null;
@@ -157,7 +166,7 @@ export type SdkStaticOptions = {
  */
 export function buildQueryOptions(options: ClaudeCodeAdapterOptions = {}): ClaudeQueryPlan {
   const processEnv = options.env ?? process.env;
-  const role: ClaudeRole = options.role ?? "cli_executor";
+  const role: ClaudeRole = options.role ?? "composer";
   const model = options.model ?? DEFAULT_CLAUDE_MODEL;
   const apiKey = options.apiKey ?? null;
   const baseUrl = options.baseUrl ?? null;
@@ -309,7 +318,7 @@ export class ClaudeCodeAdapter extends CommandAgentAdapter {
       visible_output_parser: extractClaudeVisibleOutput,
       hidden_paths: plan.hiddenPaths,
     });
-    this.role = options.role ?? "cli_executor";
+    this.role = options.role ?? "composer";
     this.policy = plan.policy;
     this.reasoningEffort = plan.reasoningEffort;
     // Snapshot-only exclusions: unlike hiddenPaths these are not denied to the
@@ -325,7 +334,7 @@ export class ClaudeCodeAdapter extends CommandAgentAdapter {
     env: Environment,
     budget: EpisodeBudget,
     liveTrajectoryPath: string | null = null,
-    options: { signal?: AbortSignal } = {},
+    options: EpisodeQueryOptions = {},
   ): Promise<EpisodeResult> {
     const guardPaths = [...this.hiddenPaths, ...this.guardExcludePaths];
     const before = isAuditorRole(this.role)
@@ -372,7 +381,7 @@ export class ClaudeCodeAdapter extends CommandAgentAdapter {
     env: Environment,
     budget: EpisodeBudget,
     liveTrajectoryPath: string | null,
-    options: { signal?: AbortSignal },
+    options: EpisodeQueryOptions,
   ): Promise<EpisodeResult> {
     const start = monotonicMs();
     const promptPath = `${this.promptDir}/${episodePromptLabel(liveTrajectoryPath)}_${uuid12()}.md`;
@@ -425,6 +434,17 @@ export class ClaudeCodeAdapter extends CommandAgentAdapter {
         abortController,
         stderr: appendStderr,
       };
+      // Per-episode additions from the loop: in-process hooks (evidence
+      // ledger, write scopes, stop gate), harness-defined subagents, a
+      // task-specific system prompt suffix and a hard dollar ceiling.
+      if (options.hooks) queryOptions.hooks = options.hooks as Options["hooks"];
+      if (options.agents && this.policy.subagents) queryOptions.agents = options.agents as Options["agents"];
+      if (options.systemPromptAppend) {
+        queryOptions.systemPrompt = { type: "preset", preset: "claude_code", append: options.systemPromptAppend };
+      }
+      if (typeof options.maxBudgetUsd === "number" && options.maxBudgetUsd > 0) {
+        queryOptions.maxBudgetUsd = options.maxBudgetUsd;
+      }
       // No canUseTool: under bypassPermissions the SDK never consults it; the
       // Read(//p/**)/Edit(//p/**) deny rules in `disallowedTools` do the work.
       const mcpServers = this.loadMcpServers();

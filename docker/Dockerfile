@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 #
-# Containerised LongHorizon-Harness (TypeScript port on the Claude Agent SDK).
+# Containerised lh-harness-eray (plan-tree loop on the Claude Agent SDK).
 #
 # Two host problems this image sidesteps by construction:
 #   1. Host-global Claude instructions (~/.claude/CLAUDE.md, settings, hooks)
@@ -26,11 +26,15 @@ RUN cd frontend/web && npm run build
 # ---- stage 2: the harness ---------------------------------------------------
 FROM node:22-bookworm-slim
 
-# git: agents commit/inspect repos; python3/curl/jq/ca-certificates: common
-# executor tooling; no GUI/computer-use stack ships in the image (CLI subtasks
-# only) -- install a computer-use plugin on a desktop host instead.
+# git: agents commit/inspect repos; curl/jq/ca-certificates: common composer
+# tooling. Native desktop computer-use is out of scope in a container; the
+# browser (Playwright MCP + Chromium, below) is the GUI surface here.
+# ffmpeg/ffprobe + ImageMagick + fonts: media deliverables (ad videos, thumbnails)
+# are rendered and verified inside the sandbox; python3 also runs the loop's
+# context selector (sdk/src/loop/context_selector.py).
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      git gh ca-certificates python3 curl jq procps \
+      git gh ca-certificates python3 curl jq procps unzip \
+      ffmpeg imagemagick fonts-dejavu fonts-liberation fonts-noto-core \
  && rm -rf /var/lib/apt/lists/*
 
 # The Agent SDK spawns the `claude` CLI; it is not vendored in the SDK package.
@@ -45,7 +49,7 @@ RUN npm install -g @playwright/mcp@0.0.79 \
       chromium fonts-liberation fonts-dejavu-core \
  && rm -rf /var/lib/apt/lists/*
 
-# MCP config the harness hands to GUI-capable roles (executors + auditors).
+# MCP config the harness hands to browser-capable roles (planner, composer, evaluator).
 # LH_HARNESS_CLAUDECODE_MCP_CONFIG is the adapter's documented env override, so
 # no per-project plugin install is needed inside the container.
 RUN mkdir -p /app/mcp && printf '%s' '{"mcpServers":{"playwright":{"command":"playwright-mcp","args":["--headless","--isolated","--no-sandbox","--executable-path","/usr/bin/chromium","--output-dir","/tmp/playwright-mcp-output"]}}}' > /app/mcp/playwright.mcp.json
@@ -61,8 +65,8 @@ COPY sdk/ ./sdk/
 COPY --from=web /build/frontend/web/dist ./sdk/frontend/web/dist
 COPY README.md LICENSE ./
 COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh
-RUN chmod +x /usr/local/bin/entrypoint.sh sdk/bin/lh-harness.mjs \
- && ln -s /app/sdk/bin/lh-harness.mjs /usr/local/bin/lh-harness
+RUN chmod +x /usr/local/bin/entrypoint.sh sdk/bin/lh-harness-eray.mjs \
+ && ln -s /app/sdk/bin/lh-harness-eray.mjs /usr/local/bin/lh-harness-eray
 
 # A fresh, EMPTY Claude config dir: no host ~/.claude, no CLAUDE.md, no hooks.
 ENV CLAUDE_CONFIG_DIR=/app/.claude-container

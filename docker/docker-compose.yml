@@ -1,4 +1,4 @@
-# Containerised LongHorizon-Harness.
+# Containerised lh-harness-eray.
 #
 #   cp docker/.env.example docker/.env            # token(s) + LH_HARNESS_WEB_TOKEN
 #   docker compose -f docker/docker-compose.yml build

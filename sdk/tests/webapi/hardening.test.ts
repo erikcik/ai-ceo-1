@@ -37,7 +37,9 @@ function runFixture(tmp: string): { root: string; state: DashboardState } {
   const root = path.join(tmp, "runs");
   const run = path.join(root, "run-1");
   const role = path.join(run, "logs", "role_management");
-  fs.mkdirSync(path.join(role, "rounds", "round_001"), { recursive: true });
+  fs.mkdirSync(role, { recursive: true });
+  // One composer episode directory: `<logDir>/<role>_episodes/epNNN`.
+  fs.mkdirSync(path.join(run, "logs", "composer_episodes", "ep001"), { recursive: true });
   fs.writeFileSync(
     path.join(role, "events.jsonl"),
     `${JSON.stringify({ event: "role_harness_start", ts: 1 })}\n`,
@@ -284,11 +286,11 @@ test("a multi-run registry does not create a phantom local run", async () => {
 test("html artifacts are attachments", async () => {
   const tmp = tmpDir();
   const { root, state } = runFixture(tmp);
-  const target = path.join(root, "run-1", "logs", "role_management", "rounds", "round_001", "proof.html");
+  const target = path.join(root, "run-1", "logs", "composer_episodes", "ep001", "proof.html");
   fs.writeFileSync(target, "<script>alert(1)</script>", "utf-8");
   const handle = await serve({ state, runsRoot: root, runId: "run-1" });
 
-  const response = await fetch(`${handle.url}api/runs/run-1/rounds/1/artifacts/proof.html/raw`);
+  const response = await fetch(`${handle.url}api/runs/run-1/episodes/composer/1/artifacts/proof.html/raw`);
   await response.text();
 
   assert.equal(response.status, 200);
@@ -299,16 +301,16 @@ test("html artifacts are attachments", async () => {
 test("non-raster documents are attachments and the filename is header safe", async () => {
   const tmp = tmpDir();
   const { root, state } = runFixture(tmp);
-  const roundDir = path.join(root, "run-1", "logs", "role_management", "rounds", "round_001");
+  const episode = path.join(root, "run-1", "logs", "composer_episodes", "ep001");
   // The filesystem permits both quote-bearing and non-ASCII names.  They must
   // not corrupt the response header or alter its disposition semantics.
-  fs.writeFileSync(path.join(roundDir, 'x";foo.pdf'), Buffer.from("%PDF-fixture"));
-  fs.writeFileSync(path.join(roundDir, "günaydın.svgz"), Buffer.from("not-an-inline-document"));
+  fs.writeFileSync(path.join(episode, 'x";foo.pdf'), Buffer.from("%PDF-fixture"));
+  fs.writeFileSync(path.join(episode, "günaydın.svgz"), Buffer.from("not-an-inline-document"));
   const handle = await serve({ state, runsRoot: root, runId: "run-1" });
 
-  const pdf = await fetch(`${handle.url}api/runs/run-1/rounds/1/artifacts/x%22%3Bfoo.pdf/raw`);
+  const pdf = await fetch(`${handle.url}api/runs/run-1/episodes/composer/1/artifacts/x%22%3Bfoo.pdf/raw`);
   await pdf.text();
-  const svgz = await fetch(`${handle.url}api/runs/run-1/rounds/1/artifacts/g%C3%BCnayd%C4%B1n.svgz/raw`);
+  const svgz = await fetch(`${handle.url}api/runs/run-1/episodes/composer/1/artifacts/g%C3%BCnayd%C4%B1n.svgz/raw`);
   await svgz.text();
 
   assert.equal(pdf.status, 200);
@@ -328,33 +330,32 @@ test("non-raster documents are attachments and the filename is header safe", asy
 test("an artifact query token is not an authentication fallback", async () => {
   const tmp = tmpDir();
   const { root, state } = runFixture(tmp);
-  const target = path.join(root, "run-1", "logs", "role_management", "rounds", "round_001", "proof.txt");
+  const target = path.join(root, "run-1", "logs", "composer_episodes", "ep001", "proof.txt");
   fs.writeFileSync(target, "private", "utf-8");
   const handle = await serve({ state, runsRoot: root, runId: "run-1", authToken: "secret" });
 
-  const response = await fetch(`${handle.url}api/runs/run-1/rounds/1/artifacts/proof.txt/raw?token=secret`);
+  const response = await fetch(`${handle.url}api/runs/run-1/episodes/composer/1/artifacts/proof.txt/raw?token=secret`);
   await response.text();
 
   assert.equal(response.status, 401);
 });
 
-test("an artifact round symlink cannot escape the log root", async () => {
+test("an artifact episode symlink cannot escape the log root", async () => {
   const tmp = tmpDir();
   const { root, state } = runFixture(tmp);
   const outside = path.join(tmp, "outside");
   fs.mkdirSync(outside);
   fs.writeFileSync(path.join(outside, "secret.txt"), "not for the dashboard", "utf-8");
-  const rounds = path.join(root, "run-1", "logs", "role_management", "rounds");
-  fs.rmdirSync(path.join(rounds, "round_001"));
-  fs.symlinkSync(outside, path.join(rounds, "round_001"), "dir");
+  const episodes = path.join(root, "run-1", "logs", "composer_episodes");
+  fs.symlinkSync(outside, path.join(episodes, "ep002"), "dir");
   const handle = await serve({ state, runsRoot: root, runId: "run-1" });
 
-  const listed = await fetch(`${handle.url}api/runs/run-1/rounds/1/artifacts`);
+  const listed = await fetch(`${handle.url}api/runs/run-1/episodes/composer/2/artifacts`);
   const body = await listed.json();
   assert.equal(listed.status, 200);
   assert.deepEqual(body.artifacts, []);
 
-  const secret = await fetch(`${handle.url}api/runs/run-1/rounds/1/artifacts/secret.txt`);
+  const secret = await fetch(`${handle.url}api/runs/run-1/episodes/composer/2/artifacts/secret.txt/raw`);
   await secret.text();
   assert.equal(secret.status, 404);
 });
@@ -424,19 +425,18 @@ for (const targetInsideRoot of [true, false]) {
 test("artifact and trajectory final symlinks are not followed", async () => {
   const tmp = tmpDir();
   const { root, state } = runFixture(tmp);
-  const roundDir = path.join(root, "run-1", "logs", "role_management", "rounds", "round_001");
+  const episode = path.join(root, "run-1", "logs", "composer_episodes", "ep001");
   const outside = path.join(tmp, "outside-files");
   fs.mkdirSync(outside);
   const secret = path.join(outside, "secret.txt");
   fs.writeFileSync(secret, "must stay private", "utf-8");
-  fs.symlinkSync(secret, path.join(roundDir, "secret.txt"));
-  fs.symlinkSync(secret, path.join(roundDir, "manager_raw_trajectory.jsonl"));
+  fs.symlinkSync(secret, path.join(episode, "secret.txt"));
+  fs.symlinkSync(secret, path.join(episode, "composer_raw_trajectory.jsonl"));
   const handle = await serve({ state, runsRoot: root, runId: "run-1" });
 
   for (const target of [
-    "api/runs/run-1/rounds/1/artifacts/secret.txt",
-    "api/runs/run-1/rounds/1/artifacts/secret.txt/raw",
-    "api/runs/run-1/rounds/1/trajectory/manager",
+    "api/runs/run-1/episodes/composer/1/artifacts/secret.txt/raw",
+    "api/runs/run-1/episodes/composer/1/trajectory",
   ]) {
     const response = await fetch(`${handle.url}${target}`);
     await response.text();

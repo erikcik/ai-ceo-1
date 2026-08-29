@@ -24,13 +24,9 @@ function isRecord(value: unknown): value is Dict {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-/** Select the durable user-facing reply without falling back to audit text. */
-function _finalResponse(raw: Dict, report: Dict, rounds: unknown[]): string {
+/** Select the durable user-facing reply. */
+function _finalResponse(raw: Dict, report: Dict): string {
   const candidates: unknown[] = [raw.final_response, report.final_response];
-  for (let index = rounds.length - 1; index >= 0; index -= 1) {
-    const item = rounds[index];
-    if (isRecord(item)) candidates.push(item.final_response);
-  }
   for (const value of candidates) {
     if (typeof value !== "string" || !pyStrip(value)) continue;
     return value.slice(0, _MAX_FINAL_RESPONSE_CHARS);
@@ -104,7 +100,7 @@ export function _provenance(...sources: (Dict | null | undefined)[]): Dict {
 export function _safeRoleConfigs(value: unknown): Record<string, Record<string, string>> {
   if (!isRecord(value)) return {};
   const result: Record<string, Record<string, string>> = {};
-  for (const role of ["manager", "executor", "auditor"]) {
+  for (const role of ["planner", "composer", "evaluator"]) {
     const raw = value[role];
     if (!isRecord(raw)) continue;
     const agent = raw.agent;
@@ -129,9 +125,15 @@ export function _status(raw: Dict, events: Dict[], approvals: Dict[]): string {
   if (approvals.some((item) => isRecord(item) && item.status === "pending")) {
     return "waiting_approval";
   }
-  const names = new Set(events.map((item) => String((item as Dict).event)));
-  if (names.has("role_harness_cancelled")) return "cancelled";
-  if (names.has("role_harness_done")) return "completed";
+  // The newest lifecycle event decides: a resumed run appends run_resumed
+  // after an earlier run_failed/run_cancelled and is running again.
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    const name = String((events[index] as Dict).event);
+    if (name === "run_cancelled") return "cancelled";
+    if (name === "run_failed") return "failed";
+    if (name === "run_finished") return "completed";
+    if (name === "run_started" || name === "run_resumed") return "running";
+  }
   if (events.length) return "running";
   return "idle";
 }
@@ -185,16 +187,13 @@ export function buildSnapshot(state: DashboardState, options: { run_id?: string 
   const runId = options.run_id ?? null;
   const raw = state.snapshot() as Dict;
   const effectiveRunId = runId || state.currentRunId || "local";
-  // Read the event log through the same tailer used by REST/WS replay.  This
-  // keeps event ids absolute when the dashboard snapshot is limited to the
-  // last 200 records and isolates malformed records to a diagnostic warning.
   const tailer = new EventTailer(path.join(String(state.role_dir), "events.jsonl"), { run_id: effectiveRunId });
   const envelopes = tailer.read({ limit: 200 });
   const events = envelopes.map((item) => item.toDict());
   const legacyEvents = (Array.isArray(raw.events) ? raw.events : []) as Dict[];
   const approvals = (Array.isArray(raw.approvals) ? raw.approvals : []) as Dict[];
   const operatorMessages = Array.isArray(raw.operator_messages) ? raw.operator_messages : [];
-  const rounds = (Array.isArray(raw.rounds) ? raw.rounds : []) as unknown[];
+  const loop = isRecord(raw.loop) ? raw.loop : {};
   const status = canonicalLifecycleStatus(_status(raw, legacyEvents, approvals));
   const report = isRecord(raw.report) ? raw.report : {};
   let owner: Dict = {};
@@ -206,78 +205,32 @@ export function buildSnapshot(state: DashboardState, options: { run_id?: string 
       owner = {};
     }
   }
-  // A supervised worker owns the task before its first Manager report exists.
-  // Project that durable value immediately so Web does not render an active
-  // run as "no task selected" while the first round is still in progress.
   const task = String(raw.task || report.task || owner.task || "");
-  const finalResponse = _finalResponse(raw, report, rounds);
+  const finalResponse = _finalResponse(raw, report);
   let startPayload: Dict = {};
   for (let index = legacyEvents.length - 1; index >= 0; index -= 1) {
     const event = legacyEvents[index];
-    if (!isRecord(event) || event.event !== "role_harness_start") continue;
-    if (isRecord(event.payload)) {
-      startPayload = event.payload;
-    } else {
-      startPayload = event;
-    }
-    // Legacy event records store ``workspace_path`` rather than
-    // ``workspace``. Normalize just this safe, bounded field.
+    if (!isRecord(event) || event.event !== "run_started") continue;
+    startPayload = isRecord(event.payload) ? event.payload : event;
     if (!("workspace" in startPayload) && "workspace_path" in startPayload) {
       startPayload = { ...startPayload, workspace: startPayload.workspace_path };
     }
     break;
   }
   const provenance = _provenance(owner, report, startPayload);
-  // ``active_*`` means work that can still change, never merely the newest
-  // durable round.  A final Manager-only round is often appended after the
-  // Auditor has already satisfied the task; falling back to that round made
-  // clients render stale roles as active/waiting forever.
-  let activeRound: unknown = null;
-  if (!["completed", "failed", "cancelled", "blocked", "incomplete"].includes(status)) {
-    for (let index = rounds.length - 1; index >= 0; index -= 1) {
-      const item = rounds[index];
-      if (isRecord(item) && item.in_progress) {
-        activeRound = item.round_index ?? null;
-        break;
-      }
-    }
-  }
-  let activeRole: unknown = null;
-  if (activeRound !== null && activeRound !== undefined) {
-    for (let index = rounds.length - 1; index >= 0; index -= 1) {
-      const item = rounds[index];
-      if (isRecord(item) && item.round_index === activeRound && item.active_role) {
-        activeRole = item.active_role;
-        break;
-      }
-    }
-  }
+  const phase = isRecord(loop.phase) ? loop.phase : null;
+  const terminal = ["completed", "failed", "cancelled", "blocked", "incomplete"].includes(status);
+  const activeSubtask = !terminal && phase && typeof phase.current_subtask === "string" ? phase.current_subtask : null;
+  const activeRole = !terminal && phase && typeof phase.current_role === "string" ? phase.current_role : null;
   let completionSatisfied: unknown = report.completion_satisfied;
   if (typeof completionSatisfied !== "boolean") completionSatisfied = null;
-  let completionAuthority: unknown = report.completion_authority;
-  if (completionAuthority !== null && completionAuthority !== undefined) {
-    completionAuthority = String(completionAuthority);
-  } else {
-    completionAuthority = null;
-  }
-  let reportStatus: unknown = report.status;
-  if (reportStatus !== null && reportStatus !== undefined) {
-    reportStatus = canonicalLifecycleStatus(String(reportStatus));
-  } else {
-    reportStatus = null;
-  }
+  const completionAuthority = report.completion_authority !== null && report.completion_authority !== undefined ? String(report.completion_authority) : null;
+  const reportStatus = report.status !== null && report.status !== undefined ? canonicalLifecycleStatus(String(report.status)) : null;
   let exitCode: unknown = report.exit_code;
-  if (typeof exitCode === "boolean" || typeof exitCode !== "number" || !Number.isInteger(exitCode)) {
-    exitCode = null;
-  }
-  let failureReason: unknown = report.failure_reason;
-  if (failureReason !== null && failureReason !== undefined) {
-    failureReason = String(failureReason);
-  } else {
-    failureReason = null;
-  }
+  if (typeof exitCode === "boolean" || typeof exitCode !== "number" || !Number.isInteger(exitCode)) exitCode = null;
+  const failureReason = report.failure_reason !== null && report.failure_reason !== undefined ? String(report.failure_reason) : null;
   return {
-    schema_version: 1,
+    schema_version: 2,
     run: {
       id: effectiveRunId,
       status: canonicalLifecycleStatus(status),
@@ -290,26 +243,23 @@ export function buildSnapshot(state: DashboardState, options: { run_id?: string 
       exit_code: exitCode,
       failure_reason: failureReason,
       final_response: finalResponse,
+      cost_usd: typeof report.cost_usd === "number" ? report.cost_usd : null,
+      rounds_run: typeof report.rounds_run === "number" ? report.rounds_run : null,
       ...provenance,
     },
     mission: {
       task,
-      contract_path: "task_contract.txt",
-      plan_path: "manager_plan.txt",
-      verified_state_path: "task_state.txt",
+      plan_path: "plan/plan.json",
       report_path: "report.json",
     },
-    rounds,
-    active_round: activeRound ?? null,
-    active_role: activeRole ?? null,
+    loop,
+    active_subtask: activeSubtask,
+    active_role: activeRole,
     events,
     approvals,
     operator_messages: operatorMessages,
     controls: {
       can_inject: Boolean(raw.control_enabled),
-      // Approval/instruction control can attach directly to a worker,
-      // while lifecycle signals require a RunSupervisor-owned process.
-      // Supervised snapshots overlay this value in the API server.
       can_abort: false,
       can_resume: false,
     },

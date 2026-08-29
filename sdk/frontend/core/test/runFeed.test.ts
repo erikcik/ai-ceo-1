@@ -5,11 +5,24 @@ import {
   reduceRunFeed,
   type RunFeedState,
 } from '../src/runFeed';
-import type { EventEnvelope, Snapshot } from '../src/types';
+import type { EventEnvelope, LoopSnapshot, Plan, PlanNode, Snapshot } from '../src/types';
 import { availableCommands, commandHelp, normaliseMaxRounds, parseCommand, parseNewRunArgs } from '../src/commands';
-import { managerPlanSummary, managerPlanText, sortTranscript } from '../src/runView';
 import { DEFAULT_PANEL_STATE, reducePanelState } from '../src/panels';
-import { projectStatus } from '../src/statusView';
+import { phaseLabel, eventLine } from '../src/events';
+import { allNodes, ancestors, countStatuses, layoutPlan, leaves, nodeById, nodePath } from '../src/plan';
+import {
+  EMPTY_LOOP,
+  actionableApprovals,
+  composerEpisodes,
+  episodeRef,
+  loopOf,
+  normalizeLoop,
+  phaseDetailLine,
+  phaseStrip,
+  runCost,
+  runOverview,
+  subtaskById,
+} from '../src/loopView';
 import { isTrajectoryNoise, projectTrajectoryView } from '../src/trajectoryView';
 import { projectArtifactView } from '../src/artifactView';
 
@@ -17,7 +30,7 @@ function event(
   eventId: string,
   ts: number,
   runId = 'run-a',
-  type = 'round.executor.started',
+  type = 'subtask.started',
 ): EventEnvelope {
   return {
     schema_version: 1,
@@ -26,7 +39,7 @@ function event(
     ts,
     run_id: runId,
     round: 1,
-    role: 'executor',
+    role: 'composer',
     status: 'running',
     payload: {},
     legacy: {},
@@ -35,17 +48,11 @@ function event(
 
 function snapshot(runId = 'run-a', events: EventEnvelope[] = []): Snapshot {
   return {
-    schema_version: 1,
+    schema_version: 2,
     run: { id: runId, status: 'running', log_dir: `/tmp/${runId}` },
-    mission: {
-      task: `task for ${runId}`,
-      contract_path: '',
-      plan_path: '',
-      verified_state_path: '',
-      report_path: '',
-    },
-    rounds: [],
-    active_round: null,
+    mission: { task: `task for ${runId}`, plan_path: 'plan/plan.json', report_path: 'report.json' },
+    loop: EMPTY_LOOP,
+    active_subtask: null,
     active_role: null,
     events,
     approvals: [],
@@ -56,6 +63,46 @@ function snapshot(runId = 'run-a', events: EventEnvelope[] = []): Snapshot {
       warnings: [],
     },
   };
+}
+
+function node(id: string, extra: Partial<PlanNode> = {}): PlanNode {
+  return {
+    id,
+    title: id,
+    goal: '',
+    rationale: '',
+    backing: [],
+    constraints: [],
+    deliverables: [],
+    acceptance: [],
+    depends_on: [],
+    children: [],
+    status: 'pending',
+    rounds: 0,
+    last_verdict: null,
+    added_by: 'planner',
+    note: '',
+    ...extra,
+  };
+}
+
+function plan(nodes: PlanNode[], extra: Partial<Plan> = {}): Plan {
+  return {
+    schema_version: 1,
+    title: 'Plan',
+    summary: '',
+    assumptions: [],
+    questions: [],
+    nodes,
+    revision: 0,
+    created_at: 0,
+    updated_at: 0,
+    ...extra,
+  };
+}
+
+function loop(overrides: Partial<LoopSnapshot> = {}): LoopSnapshot {
+  return { ...EMPTY_LOOP, ...overrides };
 }
 
 function reduce(state: RunFeedState, ...actions: Parameters<typeof reduceRunFeed> extends [RunFeedState, infer A] ? A[] : never): RunFeedState {
@@ -130,8 +177,8 @@ test('a newer role-event snapshot cannot erase an optimistic operator message', 
 
 test('approval responses render optimistically and survive stale snapshots', () => {
   const approval = {
-    approval_id: 'approval-1', title: 'Manager needs input', message: 'Choose.', options: [], answers: [],
-    allow_input: true, input_label: '', context: {}, round_index: 1, status: 'pending', action: '', reason: '',
+    approval_id: 'approval-1', title: 'The planner has questions', message: 'Choose.', options: [], answers: [],
+    allow_input: true, input_label: '', context: { trigger: 'needs_input' }, round_index: 1, status: 'pending', action: '', reason: '',
     user_input: '', created_at: 10, resolved_at: null,
   };
   const first = event('approval-event-1', 10);
@@ -163,7 +210,7 @@ test('approval responses render optimistically and survive stale snapshots', () 
 test('a resumed run replaces its own terminal state without a reload', () => {
   // Every monotonic guard assumes a terminal frame is final. Resuming in place
   // is the one case where it is not, so without the generation counter the UI
-  // kept showing the ended run (and an empty conversation) until a reload.
+  // kept showing the ended run (and an empty graph) until a reload.
   const ended = event('resume-ev-1', 10);
   let state = reduce(createRunFeedState('run-a'), {
     type: 'seed',
@@ -221,7 +268,7 @@ test('terminality still wins inside one generation', () => {
 
 test('keeps an operator round grant when a stale pending frame arrives', () => {
   const base = {
-    approval_id: 'approval-rounds', title: 'Round limit reached', message: '', options: [], answers: [],
+    approval_id: 'approval-rounds', title: 'Composer budget exhausted', message: '', options: [], answers: [],
     allow_input: true, input_label: '', allow_extra_rounds: true, context: { trigger: 'max_rounds' },
     round_index: 5, status: 'pending', action: '', reason: '', user_input: '', created_at: 10, resolved_at: null,
   };
@@ -243,99 +290,7 @@ test('keeps an operator round grant when a stale pending frame arrives', () => {
   assert.equal(state.snapshot?.approvals[0]?.status, 'resolved');
 });
 
-test('keeps the Manager plan body when a compact route is present', () => {
-  assert.equal(
-    managerPlanText({ round_index: 1, next_step: 'gui', plan_text: 'Task contract:\nOpen the page and verify the screenshot.' }),
-    'Task contract:\nOpen the page and verify the screenshot.',
-  );
-  assert.equal(managerPlanText({ round_index: 1, next_step: 'cli' }), 'Next step: cli');
-});
-
-test('shows the routed Manager task instead of the empty completed-state preamble', () => {
-  const plan = `Current task state:
-
-Completed: None; no auditor reports exist.
-
-Incomplete: Research ten articles.
-
-Next: cli
-
-Task: Inspect the repository first and return exact file evidence.
-
-Acceptance criteria: Cite the relevant files.
-
-Boundaries: Read only.`;
-
-  assert.equal(
-    managerPlanSummary(plan),
-    'Inspect the repository first and return exact file evidence.',
-  );
-  assert.equal(managerPlanSummary('Question: Which account should be used?\n\nChoices: Work | Personal'), 'Which account should be used?');
-});
-
-test('orders a transcript strictly by time', () => {
-  const ordered = sortTranscript([
-    { kind: 'plan', round: 1, sortTime: 20, id: 'plan-1' },
-    { kind: 'verification', round: 1, sortTime: 40, id: 'audit-1' },
-    { kind: 'final', sortTime: 60, id: 'reply-round-1' },
-    { kind: 'plan', round: 2, sortTime: 120, id: 'plan-2' },
-    { kind: 'user', sortRound: -1, sortTime: 1, id: 'task' },
-    // Sent after reading the round-1 answer, so it must land below it.
-    { kind: 'user', sortTime: 80, id: 'follow-up' },
-  ] as const);
-
-  assert.deepEqual(ordered.map((item) => item.id), [
-    'task', 'plan-1', 'audit-1', 'reply-round-1', 'follow-up', 'plan-2',
-  ]);
-});
-
-test('an answer never floats below a reply the operator sent earlier', () => {
-  // The regression: a closing answer written at t=60 was pinned last, so a
-  // follow-up typed at t=80 appeared above the text it responded to.
-  const ordered = sortTranscript([
-    { kind: 'user', sortTime: 80, id: 'follow-up' },
-    { kind: 'final', sortTime: 60, id: 'answer' },
-  ] as const);
-
-  assert.deepEqual(ordered.map((item) => item.id), ['answer', 'follow-up']);
-});
-
-test('untimed entries stay next to their own round', () => {
-  // Only the plan carries an event time; the rest of round 2 has none yet.
-  const ordered = sortTranscript([
-    { kind: 'user', sortTime: 10, id: 'earlier-reply' },
-    { kind: 'live', sortRound: Number.MAX_SAFE_INTEGER, id: 'live' },
-    { kind: 'verification', round: 2, id: 'audit' },
-    { kind: 'assistant', round: 2, id: 'exec' },
-    { kind: 'plan', round: 2, sortTime: 50, id: 'plan' },
-  ] as const);
-
-  assert.deepEqual(ordered.map((item) => item.id), ['earlier-reply', 'plan', 'exec', 'audit', 'live']);
-});
-
-test('the original request stays first after a resume restamps the run', () => {
-  // Resuming sets `started_at` to the reopen time, so the task card's own
-  // timestamp is newer than every round it started.
-  const ordered = sortTranscript([
-    { kind: 'plan', round: 1, sortTime: 100, id: 'plan' },
-    { kind: 'final', sortTime: 200, id: 'answer' },
-    { kind: 'user', sortRound: -1, sortTime: 9_000, id: 'task' },
-  ] as const);
-
-  assert.deepEqual(ordered.map((item) => item.id), ['task', 'plan', 'answer']);
-});
-
-test('a stable sort keeps equal entries in their projected order', () => {
-  const ordered = sortTranscript([
-    { kind: 'user', round: 1, id: 'first' },
-    { kind: 'user', round: 1, id: 'second' },
-    { kind: 'user', round: 1, id: 'third' },
-  ] as const);
-
-  assert.deepEqual(ordered.map((item) => item.id), ['first', 'second', 'third']);
-});
-
-test('normalizes the Web round limit without changing a typed ten to one', () => {
+test('normalizes the composer-episode limit without changing a typed ten to one', () => {
   assert.equal(normaliseMaxRounds('10'), 10);
   assert.equal(normaliseMaxRounds('0010'), 10);
   assert.equal(normaliseMaxRounds(''), 25);
@@ -467,7 +422,7 @@ test('accepts a fresh server snapshot when its retained tail is shorter than the
     snapshot: {
       ...snapshot('run-a', serverTail),
       run: { ...snapshot('run-a', serverTail).run, status: 'waiting_approval' },
-      rounds: [{ round_index: 7, in_progress: true, next_step: 'approve' }],
+      loop: loop({ plan: plan([node('write-copy', { status: 'composing' })]) }),
       approvals: [{
         approval_id: 'approval-7', title: 'Review', message: '', options: [], answers: [],
         allow_input: false, input_label: '', context: {}, round_index: 7, status: 'pending',
@@ -477,54 +432,61 @@ test('accepts a fresh server snapshot when its retained tail is shorter than the
   });
 
   assert.equal(state.snapshot?.run.status, 'waiting_approval');
-  assert.equal(state.snapshot?.rounds[0]?.round_index, 7);
+  assert.equal(state.snapshot?.loop.plan?.nodes[0]?.id, 'write-copy');
   assert.equal(state.snapshot?.approvals[0]?.approval_id, 'approval-7');
   assert.equal(state.events.length, 400);
   assert.equal(state.lastEventId, 'a-400');
 });
 
-test('same cursor snapshots merge durable round output instead of regressing it', () => {
+test('the loop projection replaces wholesale but is never blanked by an empty frame', () => {
+  // The loop view is rebuilt from disk on every snapshot, so it is replaced
+  // rather than merged. The one thing that must not happen is a frame written
+  // before `plan.json` was read wiping the graph the operator is looking at.
   const cursor = event('same-cursor', 10);
+  const withPlan = loop({
+    plan: plan([node('root', { children: [node('leaf-a', { status: 'done' })] })], { revision: 3 }),
+    subtasks: [{
+      id: 'leaf-a', title: 'leaf-a', status: 'done', rounds: 2, last_verdict: 'PASS', contract: null,
+      rubric: '', progress: 'done', evidence_files: [], evidence_meta: [], ledger_count: 0, ledger: [],
+      evaluations: [], context: [], episodes: [],
+    }],
+  });
   let state = reduceRunFeed(createRunFeedState('run-a'), {
     type: 'seed',
     snapshot: {
       ...snapshot('run-a', [cursor]),
-      run: { ...snapshot('run-a').run, status: 'running', agent: 'codex', model: 'gpt-5.6-sol', final_response: 'Durable final reply' },
-      active_round: 1,
-      active_role: 'executor',
-      rounds: [{
-        round_index: 1,
-        in_progress: true,
-        roles: ['manager', 'executor'],
-        plan_text: 'Inspect the workspace',
-        executor_output: 'Changed src/app.ts',
-        final_response: 'Durable final reply',
-        role_sizes: { executor: 120 },
-        executor_status: { status: 'completed', output: 'Changed src/app.ts' },
-        final_response_status: { status: 'completed' },
-      }],
+      run: { ...snapshot('run-a').run, agent: 'codex', model: 'gpt-5.6-sol', cost_usd: 1.25, rounds_run: 4 },
+      loop: withPlan,
+      active_subtask: 'leaf-a',
+      active_role: 'composer',
     },
   });
   state = reduceRunFeed(state, {
     type: 'snapshot',
     snapshot: {
       ...snapshot('run-a', [cursor]),
-      run: { ...snapshot('run-a').run, status: 'running', agent: 'codex', model: null },
-      active_round: null,
+      run: { ...snapshot('run-a').run, agent: 'codex', model: null },
+      loop: EMPTY_LOOP,
+      active_subtask: null,
       active_role: null,
-      rounds: [{ round_index: 1, in_progress: true, roles: ['executor'], role_sizes: { executor: 4 }, executor_status: {} }],
     },
   });
-  const round = state.snapshot?.rounds[0];
-  assert.equal(round?.plan_text, 'Inspect the workspace');
-  assert.equal(round?.executor_output, 'Changed src/app.ts');
-  assert.equal(round?.executor_status?.status, 'completed');
-  assert.equal(round?.final_response, 'Durable final reply');
-  assert.equal(round?.final_response_status?.status, 'completed');
-  assert.equal(round?.role_sizes?.executor, 120);
-  assert.equal(state.snapshot?.active_round, 1);
+
+  assert.equal(state.snapshot?.loop.plan?.revision, 3);
+  assert.equal(state.snapshot?.loop.subtasks[0]?.id, 'leaf-a');
+  assert.equal(state.snapshot?.active_subtask, 'leaf-a');
   assert.equal(state.snapshot?.run.model, 'gpt-5.6-sol');
-  assert.equal(state.snapshot?.run.final_response, 'Durable final reply');
+  assert.equal(state.snapshot?.run.cost_usd, 1.25);
+  assert.equal(state.snapshot?.run.rounds_run, 4);
+
+  // A frame that does carry a plan wins outright, including node removals.
+  const revised = loop({ plan: plan([node('root-2')], { revision: 4 }) });
+  state = reduceRunFeed(state, {
+    type: 'snapshot',
+    snapshot: { ...snapshot('run-a', [cursor]), loop: revised },
+  });
+  assert.equal(state.snapshot?.loop.plan?.revision, 4);
+  assert.deepEqual(state.snapshot?.loop.plan?.nodes.map((item) => item.id), ['root-2']);
 });
 
 test('a resolved gate lets the run go back to running without a reload', () => {
@@ -615,6 +577,7 @@ test('parses the shared command catalog and gates only explicit capabilities', (
   assert.equal(parseCommand('plain text'), null);
   const commands = availableCommands({}, snapshot('run-a'), true);
   assert.equal(commands.some((item) => item.name === 'inject'), true);
+  assert.equal(commands.some((item) => item.name === 'briefings'), true);
   assert.equal(availableCommands({ injections: false }, snapshot('run-a'), true).some((item) => item.name === 'inject'), false);
   assert.match(commandHelp({}, snapshot('run-a'), true), /\/trajectory/);
 });
@@ -656,15 +619,15 @@ test('parses /new options consistently and rejects malformed flags', () => {
     task: 'do --model as task text',
   });
   assert.deepEqual(parseNewRunArgs([
-    'mixed', '--manager-agent', 'codex', '--manager-model=gpt-manager',
-    '--executor-agent=claude_code', '--executor-model', 'sonnet',
-    '--auditor-agent', 'codex', '--auditor-model', 'gpt-auditor',
+    'mixed', '--planner-agent', 'codex', '--planner-model=gpt-planner',
+    '--composer-agent=claude_code', '--composer-model', 'sonnet',
+    '--evaluator-agent', 'codex', '--evaluator-model', 'gpt-evaluator',
   ]), {
     task: 'mixed',
     roles: {
-      manager: { agent: 'codex', model: 'gpt-manager' },
-      executor: { agent: 'claude_code', model: 'sonnet' },
-      auditor: { agent: 'codex', model: 'gpt-auditor' },
+      planner: { agent: 'codex', model: 'gpt-planner' },
+      composer: { agent: 'claude_code', model: 'sonnet' },
+      evaluator: { agent: 'codex', model: 'gpt-evaluator' },
     },
   });
   assert.match(parseNewRunArgs(['task', '--model']).error || '', /requires a value/);
@@ -677,19 +640,19 @@ test('/new applies a global reasoning effort to every role and allows per-role o
   assert.deepEqual(parseNewRunArgs(['task', '--effort', 'high']), {
     task: 'task',
     roles: {
-      manager: { reasoning_effort: 'high' },
-      executor: { reasoning_effort: 'high' },
-      auditor: { reasoning_effort: 'high' },
+      planner: { reasoning_effort: 'high' },
+      composer: { reasoning_effort: 'high' },
+      evaluator: { reasoning_effort: 'high' },
     },
   });
   assert.deepEqual(parseNewRunArgs([
-    'task', '--effort=medium', '--manager-effort', 'ultra',
+    'task', '--effort=medium', '--planner-effort', 'ultra',
   ]), {
     task: 'task',
     roles: {
-      manager: { reasoning_effort: 'ultra' },
-      executor: { reasoning_effort: 'medium' },
-      auditor: { reasoning_effort: 'medium' },
+      planner: { reasoning_effort: 'ultra' },
+      composer: { reasoning_effort: 'medium' },
+      evaluator: { reasoning_effort: 'medium' },
     },
   });
 });
@@ -715,242 +678,248 @@ test('keeps Web panel transitions deterministic', () => {
   assert.deepEqual(state, { open: true, panel: 'trajectory' });
 });
 
-test('projects bounded run status with role and approval summaries', () => {
-  const base = snapshot('run-a', [
-    { ...event('r1-start', 1, 'run-a', 'round.manager.started'), role: 'manager' },
-    { ...event('r1-done', 2, 'run-a', 'round.recorded'), role: null },
+test('labels the loop event vocabulary and degrades unknown types', () => {
+  assert.equal(phaseLabel('plan.written'), 'Plan written');
+  assert.equal(phaseLabel('evaluation.recorded'), 'Evaluation recorded');
+  assert.equal(phaseLabel('operator.gate.opened'), 'Human gate opened');
+  assert.equal(phaseLabel('something.new.here'), 'something new here');
+  assert.equal(
+    eventLine({ ...event('e', 1, 'run-a', 'composer.completed'), role: 'composer', payload: { subtask_id: 'draft-copy', round: 2 } }),
+    'Composer finished · draft-copy · composer · r2',
+  );
+});
+
+// ---------------------------------------------------------------------------
+// Plan tree + layout
+// ---------------------------------------------------------------------------
+
+function samplePlan(): Plan {
+  return plan([
+    node('research', {
+      title: 'Research',
+      children: [
+        node('read-docs', { title: 'Read docs', status: 'done' }),
+        node('interview', { title: 'Interview', status: 'skipped' }),
+      ],
+    }),
+    node('build', {
+      title: 'Build',
+      children: [
+        node('write-copy', { title: 'Write copy', status: 'composing', depends_on: ['read-docs'] }),
+      ],
+    }),
   ]);
-  const view = projectStatus({
-    ...base,
-    run: { ...base.run, status: 'waiting_approval' },
-    active_round: 2,
-    active_role: 'executor',
-    rounds: [
-      { round_index: 1, in_progress: false, roles: ['manager', 'executor'], manager_status: { status: 'completed' } },
-      { round_index: 2, in_progress: true, roles: ['manager', 'executor'], active_role: 'executor', executor_status: { status: 'running' } },
+}
+
+test('walks the plan tree in document order', () => {
+  const tree = samplePlan();
+  assert.deepEqual(allNodes(tree).map((item) => item.id), ['research', 'read-docs', 'interview', 'build', 'write-copy']);
+  assert.deepEqual(leaves(tree).map((item) => item.id), ['read-docs', 'interview', 'write-copy']);
+  assert.equal(nodeById(tree, 'write-copy')?.title, 'Write copy');
+  assert.equal(nodeById(tree, 'missing'), null);
+  assert.deepEqual(ancestors(tree, 'write-copy').map((item) => item.id), ['build']);
+  assert.deepEqual(nodePath(tree, 'write-copy'), ['Build', 'Write copy']);
+  assert.deepEqual(allNodes(null), []);
+});
+
+test('counts only leaf statuses', () => {
+  const counts = countStatuses(samplePlan());
+  assert.equal(counts.done, 1);
+  assert.equal(counts.skipped, 1);
+  assert.equal(counts.composing, 1);
+  assert.equal(counts.pending, 0);
+});
+
+test('lays the tree out top-down with parents centred over their children', () => {
+  const layout = layoutPlan(samplePlan(), { nodeWidth: 100, nodeHeight: 50, columnGap: 20, rowGap: 50 });
+  const research = layout.byId['research'];
+  const readDocs = layout.byId['read-docs'];
+  const interview = layout.byId['interview'];
+  const writeCopy = layout.byId['write-copy'];
+
+  assert.equal(readDocs.depth, 1);
+  assert.equal(readDocs.y, 100, 'depth 1 sits one row below the root');
+  assert.equal(research.y, 0);
+  assert.equal(research.cx, (readDocs.cx + interview.cx) / 2, 'a parent is centred over its children');
+  assert.equal(interview.x - (readDocs.x + readDocs.width), 20, 'siblings keep the column gap');
+  assert.equal(writeCopy.leaf, true);
+  assert.equal(layout.byId['build'].leaf, false);
+
+  const treeEdges = layout.edges.filter((edge) => edge.kind === 'tree');
+  assert.equal(treeEdges.length, 3);
+  const dependency = layout.edges.find((edge) => edge.kind === 'dependency');
+  assert.deepEqual([dependency?.from, dependency?.to], ['read-docs', 'write-copy']);
+
+  assert.equal(layout.height, writeCopy.y + writeCopy.height);
+  assert.ok(layout.width >= research.x + research.width);
+});
+
+test('an empty plan lays out to nothing rather than throwing', () => {
+  const layout = layoutPlan(null);
+  assert.deepEqual(layout.nodes, []);
+  assert.deepEqual(layout.edges, []);
+  assert.equal(layout.width, 0);
+  assert.equal(layout.height, 0);
+});
+
+test('a dangling dependency is dropped instead of drawing an edge to nowhere', () => {
+  const layout = layoutPlan(plan([node('only', { depends_on: ['gone'] })]));
+  assert.equal(layout.edges.length, 0);
+});
+
+// ---------------------------------------------------------------------------
+// Loop projection
+// ---------------------------------------------------------------------------
+
+test('normalizes a loop projection that the backend has not written yet', () => {
+  assert.deepEqual(normalizeLoop(undefined), EMPTY_LOOP);
+  assert.deepEqual(normalizeLoop({}), EMPTY_LOOP);
+  assert.equal(normalizeLoop({ plan: { title: 'no nodes' } }).plan, null, 'a plan without nodes is not a plan');
+  const normalized = normalizeLoop({ task: 'do it', research: ['a.md', 7], plan: { nodes: [] } });
+  assert.equal(normalized.task, 'do it');
+  assert.deepEqual(normalized.research, ['a.md']);
+  assert.deepEqual(normalized.plan?.nodes, []);
+  assert.deepEqual(loopOf(snapshot('run-a')), EMPTY_LOOP);
+});
+
+test('marks the phase strip from the loop phase record', () => {
+  const executing = phaseStrip({
+    ...snapshot('run-a'),
+    loop: loop({ phase: { phase: 'executing', current_subtask: 'write-copy', current_role: 'composer', current_round: 2, updated_at: 0, detail: 'composing' } }),
+  });
+  assert.deepEqual(executing.map((step) => step.state), ['done', 'done', 'done', 'active', 'pending', 'pending']);
+
+  const failed = phaseStrip({
+    ...snapshot('run-a'),
+    run: { ...snapshot('run-a').run, status: 'failed' },
+    loop: loop({ phase: { phase: 'planning', current_subtask: null, current_role: null, current_round: null, updated_at: 0, detail: '' } }),
+  });
+  assert.equal(failed[2].state, 'failed');
+
+  const completed = phaseStrip({
+    ...snapshot('run-a'),
+    run: { ...snapshot('run-a').run, status: 'completed' },
+    loop: loop({ phase: { phase: 'finished', current_subtask: null, current_role: null, current_round: null, updated_at: 0, detail: '' } }),
+  });
+  assert.equal(completed.every((step) => step.state === 'done'), true);
+
+  assert.deepEqual(phaseStrip(snapshot('run-a')).map((step) => step.state), ['pending', 'pending', 'pending', 'pending', 'pending', 'pending']);
+});
+
+test('summarises the executing phase as subtask, role and round', () => {
+  assert.equal(
+    phaseDetailLine(loop({ phase: { phase: 'executing', current_subtask: 'write-copy', current_role: 'composer', current_round: 2, updated_at: 0, detail: '' } })),
+    'write-copy · composer · round 2',
+  );
+  assert.equal(phaseDetailLine(EMPTY_LOOP), '');
+});
+
+test('keys an episode by its per-role number, falling back to the directory', () => {
+  // `ep` is authoritative: the global `seq` counts every role's episodes.
+  assert.deepEqual(episodeRef({ role: 'composer', seq: 9, ep: 4, dir: '/runs/x/composer_episodes/ep004' }), { role: 'composer', seq: 4 });
+  // An older run has no `ep`; the directory still carries the number.
+  assert.deepEqual(episodeRef({ role: 'prompt_tailor', seq: 1, dir: '/runs/x/prompt_tailor_episodes/ep012' }), { role: 'prompt_tailor', seq: 12 });
+  // With neither, the index entry itself is the last resort.
+  assert.deepEqual(episodeRef({ role: 'planner', seq: 2, dir: '' }), { role: 'planner', seq: 2 });
+  assert.equal(episodeRef({ role: '', seq: 0, dir: '' }), null);
+});
+
+test('normalizes the run config, revision list and research titles', () => {
+  const normalized = normalizeLoop({
+    config: { max_rounds: '25', max_eval_rounds: 3, min_research_agents: 2, research_model: 'claude-opus-5' },
+    plan_revisions: [
+      { revision: 1, note: 'evaluator added a node', written_at: 20 },
+      { revision: 3, note: '', written_at: 40 },
+      'nonsense',
     ],
-    approvals: [{ approval_id: 'a-1', title: '', message: '', options: [], answers: [], allow_input: false, input_label: '', context: {}, round_index: 2, status: 'pending', action: '', reason: '', user_input: '', created_at: 0, resolved_at: null }],
-    diagnostics: { ...base.diagnostics, warnings: ['old', 'new'] },
+    research_notes: [{ file: 'vendors.md', title: 'Vendor matrix' }, { title: 'no file' }],
+    cost_usd: 4.26,
+    composer_episodes: 3,
+    decisions: '- answered the planner',
   });
+  assert.deepEqual(normalized.config, { max_rounds: 25, max_eval_rounds: 3, min_research_agents: 2, research_model: 'claude-opus-5' });
+  assert.deepEqual(normalized.plan_revisions.map((item) => item.revision), [3, 1], 'newest revision first');
+  assert.deepEqual(normalized.research_notes, [{ file: 'vendors.md', title: 'Vendor matrix' }]);
+  assert.equal(normalized.cost_usd, 4.26);
+  assert.equal(normalized.composer_episodes, 3);
+  assert.equal(normalized.decisions, '- answered the planner');
 
-  assert.deepEqual(view.rounds.map((item) => item.round), [1, 2]);
-  assert.equal(view.activeRole, 'executor');
-  assert.equal(view.pendingApprovals.length, 1);
-  assert.equal(view.roles.find((item) => item.key === 'executor')?.status, 'active');
-  assert.equal(view.progress.total, view.stages.filter((item) => item.key !== 'record' && item.status !== 'skipped').length);
-  assert.deepEqual(view.warnings.slice(0, 2), ['old', 'new']);
+  // An older server sends only file names; the tab must still list them.
+  assert.deepEqual(normalizeLoop({ research: ['a.md'] }).research_notes, [{ file: 'a.md', title: '' }]);
+  assert.equal(normalizeLoop({ config: 'nope' }).config, null);
 });
 
-test('does not project an idle run as active work', () => {
-  const view = projectStatus({
-    ...snapshot('run-idle'),
-    run: { ...snapshot('run-idle').run, status: 'idle' },
-  });
-  assert.equal(view.status, 'pending');
-  assert.equal(view.nextStepKey, null);
-});
+test('prefers the live episode totals until the report exists', () => {
+  const live = { ...snapshot('run-a'), loop: loop({ cost_usd: 2.5, composer_episodes: 3 }) };
+  assert.equal(runCost(live), 2.5);
+  assert.equal(composerEpisodes(live), 3);
 
-test('deduplicates a provider failure repeated by the role status', () => {
-  const base = snapshot('run-provider-failed');
-  const message = "Model unavailable: The 'bad-model' model is not supported.";
-  const view = projectStatus({
-    ...base,
-    run: { ...base.run, status: 'failed', failure_reason: message },
-    rounds: [{
-      round_index: 1,
-      in_progress: false,
-      next_step: 'blocked',
-      harness_feedback: message,
-      manager_status: { status: 'error', error: message },
-    }],
-  });
-
-  assert.deepEqual(view.warnings, [message]);
-});
-
-test('terminal rounds do not regress to active from stale start events', () => {
-  const base = snapshot('run-failed', [
-    { ...event('manager-start', 1, 'run-failed', 'round.manager.started'), role: 'manager' },
-  ]);
-  const view = projectStatus({
-    ...base,
-    run: { ...base.run, status: 'failed' },
-    active_round: 1,
-    active_role: 'manager',
-    rounds: [{
-      round_index: 1,
-      in_progress: false,
-      next_step: 'Repair the failing command',
-      plan_text: 'Run the screenshot check',
-      executor_output: 'Execution finished',
-      auditor_report: 'Found a failing command',
-    }],
-  });
-  assert.equal(view.roles.find((item) => item.key === 'manager')?.status, 'done');
-  assert.equal(view.nextStep, 'Repair the failing command');
-  assert.equal(view.nextStepKey, 'custom');
-});
-
-test('successful manager-only terminal round is not inflated with fake executor/auditor work', () => {
-  const base = snapshot('run-complete', [
-    { ...event('r1-manager', 1, 'run-complete', 'round.manager.started'), role: 'manager' },
-    { ...event('r1-executor', 2, 'run-complete', 'round.executor.completed'), role: 'executor', status: 'completed' },
-    { ...event('r1-auditor', 3, 'run-complete', 'round.auditor.completed'), role: 'auditor', status: 'completed' },
-  ]);
-  const view = projectStatus({
-    ...base,
-    run: { ...base.run, status: 'completed', completion_satisfied: true, completion_authority: 'manager_with_role_auditors' },
-    active_round: null,
-    active_role: null,
-    rounds: [
-      { round_index: 1, in_progress: false, next_step: 'done', plan_text: 'Execute and verify', executor_output: 'Execution finished', auditor_report: 'Status: complete' },
-      { round_index: 2, in_progress: false, next_step: 'done', plan_text: 'Task already complete' },
-    ],
-  });
-
-  const latest = view.rounds.find((round) => round.round === 2);
-  assert.deepEqual(latest?.stages.map((stage) => stage.key), ['manager', 'record']);
-  assert.equal(view.activeRound, null);
-  assert.equal(view.currentRound, 2);
-  assert.equal(view.current, null);
-  assert.equal(view.progress.ratio, 1);
-  assert.equal(view.progress.completed, view.progress.total);
-  assert.equal(view.nextStepKey, 'done');
-  assert.equal(view.roles.find((role) => role.key === 'executor')?.status, 'done');
-  assert.equal(view.roles.find((role) => role.key === 'auditor')?.status, 'done');
-});
-
-test('projects the final user reply as a distinct completed role', () => {
-  const base = snapshot('run-complete', [
-    { ...event('reply-done', 4, 'run-complete', 'round.final_response.completed'), role: 'final_response', status: 'completed' },
-  ]);
-  const view = projectStatus({
-    ...base,
-    run: { ...base.run, status: 'completed', completion_satisfied: true, final_response: 'Everything requested is now implemented.' },
-    rounds: [{
-      round_index: 1,
-      in_progress: false,
-      next_step: 'done',
-      plan_text: 'Finish the task',
-      final_response: 'Everything requested is now implemented.',
-      final_response_status: { status: 'done' },
-      roles: ['manager', 'final_response'],
-    }],
-  });
-
-  assert.equal(view.finalResponse, 'Everything requested is now implemented.');
-  assert.equal(view.stages.find((stage) => stage.key === 'final_response')?.status, 'done');
-  assert.equal(view.roles.find((role) => role.key === 'final_response')?.status, 'done');
-});
-
-test('planned but never-started terminal stages are explicit skipped evidence', () => {
-  const base = snapshot('run-stop');
-  const view = projectStatus({
-    ...base,
-    run: { ...base.run, status: 'completed' },
-    rounds: [{ round_index: 1, in_progress: false, next_step: 'cli', plan_text: 'Preparing to execute' }],
-  });
-  const stages = view.rounds[0].stages.filter((stage) => stage.key !== 'record');
-  assert.deepEqual(stages.map((stage) => stage.status), ['done', 'skipped', 'skipped']);
-  assert.equal(view.progress.total, 1);
-  assert.equal(view.progress.ratio, 1);
-});
-
-test('a stopping lifecycle does not leave stale roles looking active', () => {
-  const base = snapshot('run-stop', [
-    { ...event('manager-start', 10, 'run-stop', 'round.manager.started'), role: 'manager' },
-  ]);
-  const view = projectStatus({
-    ...base,
-    run: { ...base.run, status: 'stopping' },
-    active_round: 1,
-    active_role: 'manager',
-    rounds: [{ round_index: 1, in_progress: true, next_step: 'cli', plan_text: 'Preparing to execute' }],
-  });
-  assert.equal(view.status, 'stopping');
-  assert.equal(view.current?.status, 'stopping');
-  assert.equal(view.nextStepKey, 'stopping');
-});
-
-test('terminal lifecycle hides stale pending approvals from the actionable projection', () => {
-  const base = snapshot('run-terminal');
-  const approval = {
-    approval_id: 'stale-approval', title: 'Continue?', message: 'old checkpoint',
-    options: [], answers: [], allow_input: false, input_label: '', context: {},
-    round_index: 1, status: 'pending', action: '', reason: '', user_input: '',
-    created_at: 1, resolved_at: null,
-  } as const;
-  const terminal = projectStatus({
-    ...base,
-    run: { ...base.run, status: 'completed' },
-    approvals: [approval],
-    rounds: [{ round_index: 1, in_progress: false, plan_text: 'Task already complete', next_step: 'done' }],
-  });
-  const stopping = projectStatus({
-    ...base,
-    run: { ...base.run, status: 'stopping' },
-    approvals: [approval],
-    rounds: [{ round_index: 1, in_progress: true, plan_text: 'Finishing up', next_step: 'cli' }],
-  });
-  assert.equal(terminal.approvals.length, 1);
-  assert.equal(terminal.pendingApprovals.length, 0);
-  assert.equal(stopping.pendingApprovals.length, 0);
-  // A stale record carries no operator decision, so it must not be mistaken for
-  // a fresh answer still travelling to the worker.
-  assert.equal(stopping.awaitingHandoff, false);
-});
-
-test('a submitted decision is projected as awaiting the worker handoff', () => {
-  const base = snapshot('run-handoff');
-  const approval = {
-    approval_id: 'a-1', title: 'Continue?', message: 'checkpoint',
-    options: [], answers: [], allow_input: false, input_label: '', context: {},
-    round_index: 1, action: '', reason: '', user_input: '',
-    created_at: 1,
+  // The report is authoritative once written.
+  const ended = {
+    ...snapshot('run-a'),
+    run: { ...snapshot('run-a').run, cost_usd: 4.1, rounds_run: 5 },
+    loop: loop({ cost_usd: 3.9, composer_episodes: 4 }),
   };
-  // The lifecycle still reports `waiting_approval` because only the worker can
-  // clear it, so the answered state is the client's own optimistic record.
-  const answered = projectStatus({
-    ...base,
-    run: { ...base.run, status: 'waiting_approval' },
-    approvals: [{ ...approval, status: 'resolved', action: 'continue', resolved_at: 2 }],
-  });
-  assert.equal(answered.pendingApprovals.length, 0);
-  assert.equal(answered.awaitingHandoff, true);
+  assert.equal(runCost(ended), 4.1);
 
-  const unanswered = projectStatus({
-    ...base,
-    run: { ...base.run, status: 'waiting_approval' },
-    approvals: [{ ...approval, status: 'pending', resolved_at: null }],
-  });
-  assert.equal(unanswered.pendingApprovals.length, 1);
-  assert.equal(unanswered.awaitingHandoff, false);
-
-  // Once the worker picks the decision up the run reports its own progress, so
-  // this placeholder must disappear instead of stacking with "Manager is working".
-  const running = projectStatus({
-    ...base,
-    run: { ...base.run, status: 'running' },
-    approvals: [{ ...approval, status: 'resolved', action: 'continue', resolved_at: 2 }],
-  });
-  assert.equal(running.awaitingHandoff, false);
+  const empty = snapshot('run-a');
+  assert.equal(runCost(empty), null);
+  assert.equal(composerEpisodes(empty), null);
 });
 
-test('terminal manager-only runs mark never-invoked roles as skipped', () => {
-  const base = snapshot('manager-only');
-  const view = projectStatus({
-    ...base,
-    run: { ...base.run, status: 'completed' },
-    rounds: [{ round_index: 1, in_progress: false, plan_text: 'Confirmed the task needs no execution', next_step: 'done' }],
+test('hides stale pending gates once the run is terminal', () => {
+  const pending = {
+    approval_id: 'gate-1', title: 'A subtask is blocked', message: '', options: [], answers: [],
+    allow_input: true, input_label: '', context: { trigger: 'needs_human', subtask_id: 'write-copy' },
+    round_index: 1, status: 'pending', action: '', reason: '', user_input: '', created_at: 1, resolved_at: null,
+  };
+  const live = { ...snapshot('run-a'), approvals: [pending] };
+  assert.deepEqual(actionableApprovals(live).map((item) => item.approval_id), ['gate-1']);
+  assert.deepEqual(actionableApprovals({ ...live, run: { ...live.run, status: 'cancelled' } }), []);
+});
+
+test('projects a run overview for the empty-selection rail', () => {
+  const tree = samplePlan();
+  const view = runOverview({
+    ...snapshot('run-a'),
+    run: { ...snapshot('run-a').run, cost_usd: 2.5, rounds_run: 3, max_rounds: 25 },
+    loop: loop({
+      task: 'ship it',
+      plan: { ...tree, summary: 'two phases', questions: ['which brand?'] },
+      config: { max_rounds: 25, max_eval_rounds: 3, min_research_agents: 2, research_model: 'claude-opus-5' },
+      decisions: '- keep the tone neutral',
+      final_response: 'done',
+    }),
   });
-  assert.deepEqual(view.roles.map((role) => [role.key, role.status]), [
-    ['manager', 'done'], ['executor', 'skipped'], ['auditor', 'skipped'],
-  ]);
+  assert.equal(view.task, 'ship it');
+  assert.equal(view.summary, 'two phases');
+  assert.deepEqual(view.questions, ['which brand?']);
+  assert.equal(view.leafCount, 3);
+  assert.equal(view.counts.done, 1);
+  assert.equal(view.costUsd, 2.5);
+  assert.equal(view.roundsRun, 3);
+  assert.equal(view.maxRounds, 25);
+  assert.equal(view.maxEvalRounds, 3);
+  assert.equal(view.researchModel, 'claude-opus-5');
+  assert.equal(view.decisions, '- keep the tone neutral');
+  assert.equal(view.finalResponse, 'done');
+});
+
+test('finds a subtask projection by id', () => {
+  const subtask = {
+    id: 'write-copy', title: 'Write copy', status: 'composing', rounds: 1, last_verdict: null, contract: null,
+    rubric: '', progress: '', evidence_files: [], evidence_meta: [], ledger_count: 0, ledger: [],
+    evaluations: [], context: [], episodes: [],
+  };
+  const projected = loop({ subtasks: [subtask] });
+  assert.equal(subtaskById(projected, 'write-copy'), subtask);
+  assert.equal(subtaskById(projected, 'missing'), null);
+  assert.equal(subtaskById(projected, null), null);
 });
 
 test('projects trajectory text, images, errors, filters, and bounds', () => {
   const view = projectTrajectoryView({
-    run_id: 'run-a', round_index: 3, role: 'executor', steps: [
+    run_id: 'run-a', episode: 3, role: 'composer', steps: [
       { kind: 'session', text: 'ignore me' },
       { kind: 'tool_use', input: { command: 'ls -la' } },
       { kind: 'tool_result', text: 'x'.repeat(20), images: ['a.png', 'a.png'] },
@@ -960,6 +929,7 @@ test('projects trajectory text, images, errors, filters, and bounds', () => {
 
   assert.equal(view.truncated, false);
   assert.equal(view.totalSteps, 2);
+  assert.equal(view.episode, 3);
   assert.deepEqual(view.items.map((item) => item.kind), ['tool_result', 'error']);
   assert.equal(view.items[0].text, 'xxxxxxx…');
   assert.deepEqual(view.items[0].images, ['a.png']);
@@ -978,8 +948,8 @@ test('classifies provider reconnect/deprecation chatter as non-work noise', () =
 
 test('normalizes all supported single-image trajectory fields', () => {
   const view = projectTrajectoryView({
-    round_index: 1,
-    role: 'executor',
+    episode: 1,
+    role: 'composer',
     steps: [
       { kind: 'tool_result', image: 'data:image/png;base64,a' },
       { kind: 'tool_result', image_url: 'https://example.test/shot.png' },
@@ -997,8 +967,8 @@ test('normalizes all supported single-image trajectory fields', () => {
 
 test('marks non-zero command exits as failed even when the adapter omitted is_error', () => {
   const view = projectTrajectoryView({
-    round_index: 1,
-    role: 'executor',
+    episode: 1,
+    role: 'composer',
     steps: [
       { kind: 'tool_result', text: 'command output\n[exit_code=2]' },
       { kind: 'tool_result', exit_code: 1, text: 'failed command' },
@@ -1012,7 +982,7 @@ test('marks non-zero command exits as failed even when the adapter omitted is_er
 
 test('projects structured agent file changes and enriches matching paths with exact numstat', () => {
   const view = projectArtifactView({
-    run_id: 'run-a', round_index: 1, role: 'executor', steps: [
+    run_id: 'run-a', episode: 1, role: 'composer', steps: [
       {
         kind: 'tool_use', id: 'patch-1', name: 'apply_patch', input: {
           changes: [
@@ -1043,7 +1013,7 @@ test('projects structured agent file changes and enriches matching paths with ex
 
 test('does not present an unmatched workspace diff as exact agent line totals', () => {
   const view = projectArtifactView({
-    round_index: 1, role: 'executor', steps: [
+    episode: 1, role: 'composer', steps: [
       { kind: 'tool_use', id: 'edit-1', name: 'Edit', input: { file_path: 'src/main.py' } },
       { kind: 'tool_result', tool_use_id: 'edit-1', text: 'updated' },
       { kind: 'tool_use', id: 'stat-1', name: 'Bash', input: { command: 'git diff --stat' } },
@@ -1062,7 +1032,7 @@ test('does not present an unmatched workspace diff as exact agent line totals', 
 
 test('falls back to a bounded workspace diff when no structured file event exists', () => {
   const view = projectArtifactView({
-    round_index: 2, role: 'executor', steps: [
+    episode: 2, role: 'composer', steps: [
       { kind: 'tool_use', id: 'stat-1', name: 'shell', input: { command: "/bin/zsh -lc 'git diff --stat'" } },
       {
         kind: 'tool_result', tool_use_id: 'stat-1',
@@ -1081,7 +1051,7 @@ test('falls back to a bounded workspace diff when no structured file event exist
 
 test('projects paired tests, builds, compound checks, failures, and live validation state', () => {
   const view = projectArtifactView({
-    run_id: 'run-a', round_index: 3, role: 'executor', steps: [
+    run_id: 'run-a', episode: 3, role: 'composer', steps: [
       { kind: 'tool_use', id: 'py', name: 'shell', input: { command: 'python -m pytest -q' } },
       { kind: 'tool_result', tool_use_id: 'py', text: '............ [100%]\n12 passed, 1 skipped in 0.62s\n[exit_code=0]' },
       { kind: 'tool_use', id: 'web', name: 'shell', input: { command: 'npm --prefix frontend/web run build' } },
@@ -1116,8 +1086,8 @@ test('projects paired tests, builds, compound checks, failures, and live validat
 
 test('uses the final aggregate test line instead of summing nested runner summaries', () => {
   const view = projectArtifactView({
-    round_index: 4,
-    role: 'executor',
+    episode: 4,
+    role: 'composer',
     steps: [
       { kind: 'tool_use', id: 'pytest', name: 'shell', input: { command: 'python -m pytest -q' } },
       {
@@ -1135,8 +1105,8 @@ test('uses the final aggregate test line instead of summing nested runner summar
 
 test('does not claim success from stdout counts when the exit status is unavailable', () => {
   const view = projectArtifactView({
-    round_index: 5,
-    role: 'executor',
+    episode: 5,
+    role: 'composer',
     steps: [
       { kind: 'tool_use', id: 'pytest', name: 'shell', input: { command: 'python -m pytest -q' } },
       { kind: 'tool_result', tool_use_id: 'pytest', text: '12 passed, 1 skipped in 0.62s' },
@@ -1150,8 +1120,8 @@ test('does not claim success from stdout counts when the exit status is unavaila
 
 test('accepts an explicit protocol success status even without an exit code', () => {
   const view = projectArtifactView({
-    round_index: 6,
-    role: 'executor',
+    episode: 6,
+    role: 'composer',
     steps: [
       { kind: 'tool_use', id: 'build', name: 'shell', input: { command: 'npm run build' } },
       { kind: 'tool_result', tool_use_id: 'build', status: 'completed', text: 'build finished' },
@@ -1162,8 +1132,8 @@ test('accepts an explicit protocol success status even without an exit code', ()
 
 test('coalesces labelled TAP/Bun counters without dropping pass counts', () => {
   const view = projectArtifactView({
-    round_index: 7,
-    role: 'executor',
+    episode: 7,
+    role: 'composer',
     steps: [
       { kind: 'tool_use', id: 'node', name: 'shell', input: { command: 'npm test' } },
       {

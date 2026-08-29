@@ -34,92 +34,181 @@ interface Fixture {
   roleDir: string;
 }
 
-/** A finished round 1 plus an in-flight round 2, written like the manager does. */
+/**
+ * One planned run: a finished subtask with its rubric/contract/evaluation and a
+ * composer episode on disk, written exactly the way `src/loop/state.ts` lays the
+ * run out (`<run>/lh_harness` for the supervisor contract, `<run>/state` for
+ * everything the loop reads back).
+ */
 function buildRun(options: { reportStatus?: string | null } = {}): Fixture {
   const runsRoot = path.join(tmpDir(), "runs");
   const runDir = path.join(runsRoot, "run-1");
   const logDir = path.join(runDir, "lh_harness");
   const roleDir = path.join(logDir, "role_orchestration");
-  fs.mkdirSync(path.join(roleDir, "rounds"), { recursive: true });
+  const stateDir = path.join(runDir, "state");
+  fs.mkdirSync(roleDir, { recursive: true });
 
-  // Round directories are deliberately created newest-first: readdir order must
-  // not leak into the transcript, the numeric round_index sort must.
-  const round2 = path.join(roleDir, "rounds", "round_002");
-  write(path.join(round2, "manager_plan.txt"), "Plan for round two\nNext: GUI\n");
-  write(path.join(round2, "task_state.txt"), "state after round one");
+  write(path.join(stateDir, "task", "TASK.md"), "ship the api\n");
+  write(
+    path.join(stateDir, "phase.json"),
+    JSON.stringify({
+      phase: "executing",
+      current_subtask: "build-api",
+      current_role: "composer",
+      current_round: 1,
+      updated_at: 9,
+      detail: "",
+    }),
+  );
+  write(
+    path.join(stateDir, "plan", "plan.json"),
+    JSON.stringify({
+      schema_version: 1,
+      title: "Ship the API",
+      summary: "two steps",
+      assumptions: [],
+      questions: [],
+      revision: 1,
+      created_at: 1,
+      updated_at: 2,
+      nodes: [
+        {
+          id: "build-api",
+          title: "Build the API",
+          goal: "expose /health",
+          children: [],
+          status: "done",
+          rounds: 1,
+          last_verdict: "PASS",
+        },
+        {
+          id: "ship-it",
+          title: "Ship it",
+          goal: "deploy",
+          children: [],
+          status: "pending",
+          rounds: 0,
+          depends_on: ["build-api"],
+        },
+      ],
+    }),
+  );
+  write(path.join(stateDir, "prompts", "planner.md"), "planner briefing\n");
+  write(path.join(stateDir, "research", "web-frameworks.md"), "# notes\n");
+  write(path.join(stateDir, "rubrics", "build-api.md"), "the rubric\n");
+  write(
+    path.join(stateDir, "contracts", "build-api.json"),
+    JSON.stringify({
+      subtask_id: "build-api",
+      criteria: [{ id: "c1", statement: "/health returns 200", mandatory: true, weight: 1, passes: true, score: 5 }],
+      scoring: { scale: "0-5", pass_rule: "all mandatory pass" },
+      created_at: 1,
+      updated_at: 2,
+    }),
+  );
+  write(path.join(stateDir, "progress", "build-api.md"), "wrote the handler\n");
+  write(path.join(stateDir, "evidence", "build-api", "ledger.jsonl"), jsonl([{ claim: "200 OK", proof: "curl.txt" }]));
+  write(path.join(stateDir, "evidence", "build-api", "curl.txt"), "HTTP/1.1 200 OK\n");
+  write(
+    path.join(stateDir, "evaluations", "build-api", "r1.json"),
+    JSON.stringify({
+      subtask_id: "build-api",
+      round: 1,
+      verdict: "PASS",
+      claimed_verdict: "PASS",
+      summary: "looks right",
+      criteria: [{ id: "c1", passes: true, score: 5, checked: ["curl"], finding: "" }],
+      findings: [],
+      plan_changes: [],
+      memory_notes: [],
+      narrative: "",
+      harness_note: "",
+      episode_dir: path.join(logDir, "evaluator_episodes", "ep002"),
+      created_at: 8,
+    }),
+  );
+  write(
+    path.join(stateDir, "context", "build-api-r1.json"),
+    JSON.stringify({ selector: "loop", sections: [{ title: "Task", kind: "task", path: "task/TASK.md", reason: "always", chars: 12 }] }),
+  );
+  write(
+    path.join(stateDir, "episodes.jsonl"),
+    jsonl([
+      {
+        seq: 1,
+        role: "composer",
+        subtask_id: "build-api",
+        round: 1,
+        dir: path.join(logDir, "composer_episodes", "ep001"),
+        status: "done",
+        started_at: 4,
+        finished_at: 5,
+        duration_ms: 1200,
+        cost_usd: 0.5,
+        error: null,
+      },
+      {
+        seq: 2,
+        role: "evaluator",
+        subtask_id: "build-api",
+        round: 1,
+        dir: path.join(logDir, "evaluator_episodes", "ep002"),
+        status: "done",
+        started_at: 6,
+        finished_at: 7,
+        duration_ms: 900,
+        cost_usd: 0.25,
+        error: null,
+      },
+    ]),
+  );
+  write(path.join(stateDir, "FINAL.md"), "the state reply");
 
-  const round1 = path.join(roleDir, "rounds", "round_001");
-  write(path.join(round1, "manager_plan.txt"), "Plan for round one\nNext: CLI\n");
-  write(path.join(round1, "task_state.txt"), "initial state");
-  write(path.join(round1, "task_contract.txt"), "the contract");
-  write(path.join(round1, "executor_output.txt"), "executor said hello");
-  write(path.join(round1, "auditor_report.txt"), "auditor report text");
-  write(path.join(round1, "harness_feedback.txt"), "feedback");
-  write(path.join(round1, "final_response.txt"), "round one reply");
+  // One composer episode on disk: normalized + provider-raw trajectory.
+  const episode = path.join(logDir, "composer_episodes", "ep001");
+  write(path.join(episode, "composer_raw_trajectory.jsonl"), jsonl([{ type: "assistant" }]));
   write(
-    path.join(round1, "manager_metadata.json"),
-    JSON.stringify({ status: "done", error: null, duration_ms: 12, extra: "dropped" }),
-  );
-  write(path.join(round1, "executor_metadata.json"), JSON.stringify({ status: "done", duration_ms: 34 }));
-  write(path.join(round1, "auditor_metadata.json"), JSON.stringify({ status: "done", duration_ms: 56 }));
-  write(
-    path.join(round1, "auditor_format_repair_metadata.json"),
-    JSON.stringify({ status: "error", duration_ms: 7 }),
-  );
-  write(path.join(round1, "final_response_metadata.json"), JSON.stringify({ status: "done" }));
-  write(path.join(round1, "manager_raw_trajectory.jsonl"), jsonl([{ type: "assistant" }]));
-  write(
-    path.join(round1, "manager_trajectory.jsonl"),
+    path.join(episode, "composer_trajectory.jsonl"),
     jsonl([
       { kind: "text", text: "thinking" },
       { kind: "text", text: "the answer" },
       { kind: "result", text: "the answer" },
     ]),
   );
+  write(path.join(episode, "metadata.json"), JSON.stringify({ status: "done", duration_ms: 1200 }));
+  write(path.join(episode, "prompt.md"), "compose it");
 
   write(
     path.join(roleDir, "events.jsonl"),
     jsonl([
-      { schema_version: 1, event_id: "run-1:000001", ts: 1, event: "role_harness_start", variant: "lh_harness_role_managed", max_rounds: 4 },
-      { schema_version: 1, event_id: "run-1:000002", ts: 2, event: "manager_round_start", round: 1, prompt_chars: 10 },
-      { schema_version: 1, event_id: "run-1:000003", ts: 3, event: "manager_round_done", round: 1, next_step: "cli", status: "completed" },
-      { schema_version: 1, event_id: "run-1:000004", ts: 4, event: "executor_role_start", round: 1, role: "cli" },
-      { schema_version: 1, event_id: "run-1:000005", ts: 5, event: "executor_role_done", round: 1, role: "cli", status: "completed" },
-      { schema_version: 1, event_id: "run-1:000006", ts: 6, event: "auditor_role_start", round: 1, role: "cli" },
-      { schema_version: 1, event_id: "run-1:000007", ts: 7, event: "auditor_role_done", round: 1, role: "cli", status: "completed" },
-      { schema_version: 1, event_id: "run-1:000008", ts: 8, event: "managed_round_recorded", round: 1 },
-      { schema_version: 1, event_id: "run-1:000009", ts: 9, event: "manager_round_start", round: 2, prompt_chars: 20 },
-    ]),
-  );
-  write(
-    path.join(roleDir, "rounds.jsonl"),
-    jsonl([
-      {
-        round_index: 1,
-        next_step: "cli",
-        plan_text: "recorded plan",
-        executor_output: "recorded executor output",
-        auditor_report: "recorded auditor report",
-        harness_feedback: "",
-        task_state: "recorded state",
-        task_contract: "recorded contract",
-        related_report_refs: [],
-        manager_status: { status: "done" },
-        executor_status: { status: "done" },
-        auditor_status: { status: "done" },
-      },
+      { schema_version: 1, event_id: "run-1:000001", ts: 1, event: "run_started", max_rounds: 25 },
+      { schema_version: 1, event_id: "run-1:000002", ts: 2, event: "episode_started", role: "planner", seq: 0 },
+      { schema_version: 1, event_id: "run-1:000003", ts: 3, event: "plan_written", leaves: 2, questions: 0 },
+      { schema_version: 1, event_id: "run-1:000004", ts: 4, event: "subtask_started", subtask_id: "build-api" },
+      { schema_version: 1, event_id: "run-1:000005", ts: 5, event: "episode_started", role: "composer", seq: 1 },
+      { schema_version: 1, event_id: "run-1:000006", ts: 6, event: "episode_finished", role: "composer", seq: 1, status: "done" },
+      { schema_version: 1, event_id: "run-1:000007", ts: 7, event: "evaluation", subtask_id: "build-api", round: 1, verdict: "PASS" },
+      { schema_version: 1, event_id: "run-1:000008", ts: 8, event: "subtask_done", subtask_id: "build-api", rounds: 1 },
+      { schema_version: 1, event_id: "run-1:000009", ts: 9, event: "subtask_started", subtask_id: "ship-it" },
     ]),
   );
   write(path.join(roleDir, "final_response.txt"), "the published reply");
   const reportStatus = options.reportStatus === undefined ? null : options.reportStatus;
+  const report: Record<string, unknown> = {
+    schema_version: 3,
+    task: "reported task",
+    completion_authority: "evaluator_contracts",
+    rounds_run: 1,
+    max_rounds: 25,
+    cost_usd: 0.75,
+    status_counts: { done: 1, pending: 1 },
+    subtasks: [{ id: "build-api", status: "done" }],
+  };
   if (reportStatus !== null) {
-    write(
-      path.join(logDir, "report.json"),
-      JSON.stringify({ schema_version: 2, status: reportStatus, task: "reported task", completion_satisfied: true }),
-    );
-  } else {
-    write(path.join(logDir, "report.json"), JSON.stringify({ schema_version: 2, task: "reported task" }));
+    report.status = reportStatus;
+    report.completion_satisfied = true;
   }
+  write(path.join(logDir, "report.json"), JSON.stringify(report));
   return { runsRoot, runDir, logDir, roleDir };
 }
 
@@ -137,22 +226,21 @@ test("snapshot exposes every projected field", () => {
       "events",
       "final_response",
       "log_dir",
+      "loop",
       "operator_messages",
       "pending_injections",
       "report",
-      "round_count",
-      "rounds",
       "runs",
       "server_time",
       "task",
     ].sort(),
   );
-  assert.equal(snapshot.task, "reported task");
+  // The state tree owns the task; report.task is only a fallback.
+  assert.equal(snapshot.task, "ship the api\n");
   assert.equal(snapshot.log_dir, fixture.logDir);
   assert.equal(snapshot.current_run, "run-1");
-  // The role-scoped reply wins: the manager writes it before report.json.
+  // The role-scoped reply wins: the loop writes it before report.json.
   assert.equal(snapshot.final_response, "the published reply");
-  assert.equal(snapshot.round_count, 2);
   assert.equal(snapshot.control_enabled, false);
   assert.deepEqual(snapshot.approvals, []);
   assert.deepEqual(snapshot.operator_messages, []);
@@ -162,123 +250,101 @@ test("snapshot exposes every projected field", () => {
   assert.equal((snapshot.events as Record<string, unknown>[]).length, 9);
 });
 
-test("rounds are ordered by numeric index and merge recorded over live", () => {
+test("the loop projection carries the plan, the phase and every subtask view", () => {
   const fixture = buildRun();
   const state = new DashboardState(fixture.logDir, { runsRoot: fixture.runsRoot });
-  const rounds = state.readRounds();
+  const loop = state.readLoop();
 
-  assert.deepEqual(
-    rounds.map((round) => round.round_index),
-    [1, 2],
-  );
-  const [first, second] = rounds;
-  // Recorded values win on conflicts; ``in_progress`` is re-asserted from live.
-  assert.equal(first.plan_text, "recorded plan");
-  assert.equal(first.executor_output, "recorded executor output");
-  assert.equal(first.in_progress, false);
-  assert.equal(first.active_role, null);
-  // The live-only round keeps the incremental artifacts and stays in progress.
-  assert.equal(second.plan_text, "Plan for round two\nNext: GUI\n");
-  assert.equal(second.next_step, "gui");
-  assert.equal(second.in_progress, true);
-  assert.equal(second.active_role, "manager");
-});
-
-test("a live round directory carries every per-round field", () => {
-  const fixture = buildRun();
-  const state = new DashboardState(fixture.logDir, { runsRoot: fixture.runsRoot });
-  // Drop the recorded ledger so the raw ``_round_from_dir`` projection shows.
-  fs.unlinkSync(path.join(fixture.roleDir, "rounds.jsonl"));
-  fs.unlinkSync(path.join(fixture.logDir, "report.json"));
-  const round = state.readRounds().find((item) => item.round_index === 1)!;
-
-  assert.equal(round.next_step, "cli");
-  assert.equal(round.plan_text, "Plan for round one\nNext: CLI\n");
-  assert.equal(round.task_state, "initial state");
-  assert.equal(round.task_contract, "the contract");
-  assert.equal(round.executor_output, "executor said hello");
-  assert.equal(round.auditor_report, "auditor report text");
-  assert.equal(round.harness_feedback, "feedback");
-  assert.equal(round.final_response, "round one reply");
-  assert.deepEqual(round.related_report_refs, []);
-  // ``_status`` keeps only status/error/duration_ms with non-null values.
-  assert.deepEqual(round.manager_status, { status: "done", duration_ms: 12 });
-  assert.deepEqual(round.executor_status, { status: "done", duration_ms: 34 });
-  assert.deepEqual(round.auditor_status, {
-    status: "done",
-    duration_ms: 56,
-    format_repair_attempted: true,
-    format_repair_status: { status: "error", duration_ms: 7 },
+  assert.equal(loop.phase?.phase, "executing");
+  assert.equal(loop.phase?.current_subtask, "build-api");
+  assert.equal(loop.plan?.title, "Ship the API");
+  assert.deepEqual(loop.status_counts, {
+    pending: 1,
+    rubric: 0,
+    composing: 0,
+    evaluating: 0,
+    done: 1,
+    blocked: 0,
+    skipped: 0,
   });
-  assert.deepEqual(round.final_response_status, { status: "done" });
-  assert.equal(round.in_progress, true);
+  assert.ok(loop.plan_markdown.includes("Build the API"));
+  assert.deepEqual(Object.keys(loop.briefings), ["planner"]);
+  assert.deepEqual(loop.research, ["web-frameworks.md"]);
+  assert.deepEqual(loop.episodes.map((episode) => episode.seq), [1, 2]);
+  assert.equal(loop.final_response, "the state reply");
+
+  assert.deepEqual(loop.subtasks.map((subtask) => subtask.id), ["build-api", "ship-it"]);
+  const [done, pending] = loop.subtasks;
+  assert.equal(done.status, "done");
+  assert.equal(done.last_verdict, "PASS");
+  assert.equal(done.rubric, "the rubric\n");
+  assert.equal(done.progress, "wrote the handler\n");
+  assert.equal(done.contract?.criteria[0].id, "c1");
+  assert.deepEqual(done.evidence_files, ["curl.txt"]);
+  assert.equal(done.ledger_count, 1);
+  assert.equal(done.evaluations.length, 1);
+  assert.equal(done.evaluations[0].verdict, "PASS");
+  assert.deepEqual(done.context.map((entry) => entry.round), [1]);
+  assert.deepEqual(done.episodes.map((episode) => episode.role), ["composer", "evaluator"]);
+  assert.equal(pending.status, "pending");
+  assert.equal(pending.contract, null);
 });
 
-test("a terminal report closes every in-progress round", () => {
-  const fixture = buildRun({ reportStatus: "completed" });
-  const state = new DashboardState(fixture.logDir, { runsRoot: fixture.runsRoot });
-  assert.ok(state.readRounds().every((round) => round.in_progress === false));
-});
-
-test("a cancellation event closes every in-progress round", () => {
+test("state files are readable, listable and traversal-safe", () => {
   const fixture = buildRun();
-  fs.appendFileSync(
-    path.join(fixture.roleDir, "events.jsonl"),
-    jsonl([{ schema_version: 1, ts: 10, event: "role_harness_cancelled", round: 2, status: "cancelled" }]),
-    "utf-8",
-  );
   const state = new DashboardState(fixture.logDir, { runsRoot: fixture.runsRoot });
-  const rounds = state.readRounds();
-  assert.ok(rounds.every((round) => round.in_progress === false));
-  // A run-level lifecycle event clears the active role regardless of round.
-  assert.ok(rounds.every((round) => round.active_role === null));
-});
 
-test("snapshot adds roles and role_sizes per round", () => {
-  const fixture = buildRun();
-  const state = new DashboardState(fixture.logDir, { runsRoot: fixture.runsRoot });
-  const rounds = state.snapshot().rounds as Record<string, unknown>[];
-  assert.deepEqual(rounds[0].roles, ["manager"]);
-  const sizes = rounds[0].role_sizes as Record<string, number>;
-  assert.ok(sizes.manager > 0);
-  assert.deepEqual(rounds[1].roles, []);
+  assert.equal(state.readStateFile("task/TASK.md"), "ship the api\n");
+  assert.equal(state.stateFileSize("task/TASK.md"), "ship the api\n".length);
+  assert.deepEqual(state.listStateDir("evidence/build-api"), ["curl.txt", "ledger.jsonl"]);
+  assert.ok(state.listStateDir("").includes("plan"));
+  for (const bad of ["../lh_harness/report.json", "..", ".", "", "task/../../etc"]) {
+    assert.equal(state.resolveStateFile(bad), null);
+  }
+  assert.equal(state.readStateFile("task/missing.md"), null);
 });
 
 test("trajectories prefer the normalized file and de-duplicate the final text", () => {
   const fixture = buildRun();
   const state = new DashboardState(fixture.logDir, { runsRoot: fixture.runsRoot });
-  const trajectory = state.readTrajectory(1, "manager")!;
+  const trajectory = state.readTrajectory("composer", 1)!;
 
   assert.equal(trajectory.trajectory_source, "normalized");
-  assert.equal(trajectory.round_index, 1);
-  assert.equal(trajectory.role, "manager");
+  assert.equal(trajectory.episode, 1);
+  assert.equal(trajectory.role, "composer");
   // The trailing ``result`` duplicates the preceding ``text`` step, which is
   // removed so the UI does not render the reply twice.
   assert.equal(trajectory.step_count, 2);
-  assert.equal(state.readTrajectory(1, "not_a_role"), null);
-  assert.equal(state.readTrajectory(2, "manager"), null);
+  assert.equal(state.readTrajectory("not_a_role", 1), null);
+  assert.equal(state.readTrajectory("composer", 2), null);
 });
 
-test("artifacts are listed, bounded and traversal-safe", () => {
+test("episode artifacts are listed, bounded and traversal-safe", () => {
   const fixture = buildRun();
   const state = new DashboardState(fixture.logDir, { runsRoot: fixture.runsRoot });
-  const artifacts = state.listRoundArtifacts(1);
+  const artifacts = state.listEpisodeArtifacts("composer", 1);
 
   assert.deepEqual(artifacts, [...artifacts].sort());
-  assert.ok(artifacts.includes("manager_plan.txt"));
-  assert.equal(state.readRoundArtifact(1, "task_state.txt"), "initial state");
-  assert.equal(state.roundArtifactSize(1, "task_state.txt"), "initial state".length);
+  assert.ok(artifacts.includes("composer_trajectory.jsonl"));
+  assert.ok(artifacts.includes("metadata.json"));
+  assert.equal(state.readEpisodeArtifactBytes("composer", 1, "prompt.md")?.toString("utf-8"), "compose it");
+  assert.equal(state.episodeArtifactSize("composer", 1, "prompt.md"), "compose it".length);
   for (const name of ["../report.json", "..", ".", "", "nested/name"]) {
-    assert.equal(state.resolveRoundArtifact(1, name), null);
+    assert.equal(state.resolveEpisodeArtifact("composer", 1, name), null);
   }
-  assert.equal(state.readRoundArtifact(1, "missing.txt"), null);
+  assert.equal(state.readEpisodeArtifactBytes("composer", 1, "missing.txt"), null);
+  // The episode number is recovered from the index entry's absolute directory.
+  assert.deepEqual(
+    DashboardState.episodeSeqFromDir(path.join(fixture.logDir, "composer_episodes", "ep001")),
+    { role: "composer", ep: 1 },
+  );
 });
 
 test("events are tail-limited and the limit is clamped", () => {
   const fixture = buildRun();
   const state = new DashboardState(fixture.logDir, { runsRoot: fixture.runsRoot });
   assert.equal(state.readEvents({ limit: 2 }).length, 2);
-  assert.equal(state.readEvents({ limit: 2 })[1].event, "manager_round_start");
+  assert.equal(state.readEvents({ limit: 2 })[1].event, "subtask_started");
   assert.equal(state.readEvents({ limit: 0 }).length, 1);
   assert.equal(state.readEvents({ limit: 10_000 }).length, 9);
 });

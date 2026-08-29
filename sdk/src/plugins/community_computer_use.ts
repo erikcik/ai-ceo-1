@@ -7,8 +7,8 @@
 // `~/.lh-harness/plugins/` -- never into Claude's user config. The vendors' own
 // `install-*-mcp` helpers are deliberately not used because they register the
 // server globally, which would hand GUI control to every unrelated Claude
-// session. Nothing here runs during `lh-harness run`; setup is always an
-// explicit `lh-harness plugin` opt-in.
+// session. Nothing here runs during `lh-harness-eray run`; setup is always an
+// explicit `lh-harness-eray plugin` opt-in.
 //
 // Single-backend port: `claude_code` is the only supported agent, so the Codex
 // entries in `agents` and the Codex leftover probe are dropped.
@@ -17,6 +17,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+import { DEFAULT_STATE_ROOT } from "../types.js";
 import { which } from "../utils/agent_cli.js";
 import { PluginError } from "./errors.js";
 import {
@@ -153,7 +154,9 @@ export const PLAYWRIGHT_MCP: CommunityPlugin = communityPlugin({
   agents: [AGENT_CLAUDE_CODE],
   // --no-sandbox: Chromium's sandbox needs user namespaces that containers
   // usually lack; --isolated keeps the profile in memory per episode.
-  mcp_args: ["--headless", "--isolated", "--no-sandbox"],
+  // --output-dir keeps screenshots/console logs out of the workspace: browser
+  // residue in the project folder used to trip the evaluator's snapshot guard.
+  mcp_args: ["--headless", "--isolated", "--no-sandbox", "--output-dir", path.join(DEFAULT_STATE_ROOT, "tmp", "playwright-mcp-output")],
   // The browser binary is a separate download from the npm package.
   activation: {
     darwin: [["npx", "--yes", "playwright", "install", "chromium"]],

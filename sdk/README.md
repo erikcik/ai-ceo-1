@@ -1,52 +1,50 @@
-# lh-harness (TypeScript, Claude Agent SDK)
-
-A module-for-module port of LongHorizon-Harness's `src/lh_harness/` Python
-package. Same loop, same roles, same prompts, same file formats, same CLI, same
-dashboard protocol — the agent episode runs through `query()` from
-`@anthropic-ai/claude-agent-sdk` instead of a `claude --print` subprocess.
+# lh-harness-eray (sdk)
 
 ```bash
 npm install && npm run build:web
-node bin/lh-harness.mjs doctor
-node bin/lh-harness.mjs init
-node bin/lh-harness.mjs web --workspace-root .
-node bin/lh-harness.mjs run --task @task.md
-npm test                                 # node:test ports of the upstream test-suite
+node bin/lh-harness-eray.mjs doctor
+node bin/lh-harness-eray.mjs init
+node bin/lh-harness-eray.mjs web --workspace-root .
+node bin/lh-harness-eray.mjs run --task @task.md
+npm test            # node:test suites (tests/loop/ covers the loop end to end with a scripted adapter)
 npm run typecheck
 ```
 
-## Module map (Python → TypeScript)
+## Module map
 
-| upstream `src/lh_harness/` | here `src/` | notes |
-|---|---|---|
-| `types.py` | `types.ts` | snake_case fields on every record that reaches disk |
-| `prompt_texts.py`, `role_prompts.py` | `prompt_texts.ts`, `role_prompts.ts` | English-only: the upstream `zh` prompt catalog, route markers, and transcript headings were removed; `tests/golden/` snapshots pin the current English output |
-| `manager.py` | `manager.ts` | the round loop, `events.jsonl` + `rounds.jsonl` ledgers, `report.json` schema 2, human gate, resume, continue-after-finish, final response |
-| `auditor_agent.py` | `auditor_agent.ts` | control-header parsing, blocking-constraint guard, workspace-mutation cross-check |
-| `runtime_signals.py`, `agent_logs.py`, `trajectory_artifacts.py` | same names | differential-tested against the Python |
-| `provider_errors.py`, `agent_registry.py`, `model_catalog.py`, `config.py` | same names | registry has one backend: `claude_code`; catalog appends `<provider>:<model>` ids from `providers.json` |
-| `adapters/claude_code.py`, `claude_permissions.py`, `cli_agent.py`, `base.py` | `adapters/*.ts` | role policies, path deny rules, snapshot guard; episodes via the Agent SDK |
-| `environment/{base,local,remote_files}.py` | `environment/*.ts` | `local` only, as upstream |
-| `supervisor/{service,control_bus,lifecycle}.py` | `supervisor/*.ts` | file-based control bus under `<run>/control/`; lockfile instead of `flock` |
-| `dashboard/{state,gate,rules}.py` | `dashboard/*.ts` | snapshot projection and the five human-gate triggers |
-| `webapi/{server,events,models,protocol,snapshot}.py` | `webapi/*.ts` | `node:http` + `ws`; same routes, auth, WS subprotocols, close codes |
-| `plugins/*.py` | `plugins/*.ts` | `open-computer-use`, `clawdcursor` (npm MCP servers); codex plugin not ported |
-| `utils/*.py` | `utils/*.ts` | + `pystr.ts` for Python string semantics |
-| `cli.py` | `cli.ts` | `init · run · web · dashboard · doctor · plugin · check-update` |
-| `frontend/core`, `frontend/web` | `frontend/core`, `frontend/web` | copied verbatim; pickers narrowed to `claude_code` |
+| path | what |
+|---|---|
+| `src/loop/runner.ts` | the loop: `run()` crash boundary → `runImpl()` schedule → `phaseIntake/Tailor/Plan/Execute/Finalize`, `runSubtask` (rubric → [context → composer → evaluator]×N), human gates, report |
+| `src/loop/plan.ts` | plan tree types, `parsePlan`, `nextReadyLeaf` (dependency order), `applyPlanChanges` (evaluator/operator edits), markdown rendering |
+| `src/loop/state.ts` | `RunState`: every file under `<run>/state/`, contracts + evaluations parsing, the contract pass rule, `readLoopSnapshot` for the workbench |
+| `src/loop/hooks.ts` | Agent SDK hooks: kill switch/steering, write scopes, evidence ledger, composer stop gate |
+| `src/loop/context.ts` + `context_selector.py` | decides (deterministically, with reasons) what the composer sees each round |
+| `src/loop/prompts.ts` + `prompts/*.md` | role prompts: `common.md` + `<role>.md` + tailored briefing + episode inputs |
+| `src/loop/subagents.ts` | `web-researcher`, `memory-curator`, `rubric-researcher`, `evaluation-researcher` |
+| `src/loop/memory.ts` | the Karpathy-style wiki: index regeneration, log |
+| `src/loop/episodes.ts` | run one episode, record it (`<logDir>/<role>_episodes/epNNN`), append events |
+| `src/adapters/claude_code.ts`, `claude_permissions.ts` | `query()` backend, per-role tool policies, evaluator snapshot guard |
+| `src/providers.ts`, `shim.ts`, `providers.json` | third-party model routing |
+| `src/capabilities.ts` | per-run external-tool grants (env + MCP + prompt note) |
+| `src/supervisor/*` | worker process lifecycle, control bus, resume |
+| `src/webapi/*` | HTTP + WS API; `snapshot.ts` builds the workbench snapshot (`loop`, `active_subtask`, …) |
+| `src/dashboard/state.ts`, `gate.ts` | on-disk projection + approvals; the human gate triggers |
+| `src/cli.ts`, `config.ts` | `init · run · web · dashboard · doctor · plugin · check-update · start`; `config.toml` |
+| `frontend/` | React workbench (plan graph + node panel) |
 
-Not ported, by design: the `codex`, `opencode`, `deepseek_harness` adapters and
-the Codex-bundled computer-use plugin (the Agent SDK is the single backend;
-third-party models go through `providers.json` + `shim.ts`), and `eval/`
-(frozen benchmark snapshots).
+## Roles and what they may do
+
+| role | tools | writes | subagents | notes |
+|---|---|---|---|---|
+| prompt_tailor | Read/Glob/Grep | nothing (harness stores its output) | no | one short session |
+| planner | everything incl. browser, WebSearch | `state/research`, `state/plan/PLAN.md`, `memory/`, `inbox/` | yes | ≥ `min_research_agents` researchers |
+| rubric | Read/Glob/Grep/WebSearch/WebFetch | `state/rubrics`, `memory/` | yes | contract JSON parsed by the harness |
+| composer | everything | workspace + `state/progress`, `state/evidence`; **not** contracts/evaluations/plan | yes | ledger + stop gate hooks |
+| evaluator | everything incl. browser/computer use | `memory/` only; snapshot guard flags any other mutation | yes | verdict checked against the contract rule |
+| final_response | Read | nothing | no | |
 
 ## Third-party model providers
 
-`providers.json` declares Anthropic-compatible or OpenAI-compatible endpoints:
-base URL, the *name* of the env var holding the key, wire format, optional
-`extraBody` (e.g. vLLM `chat_template_kwargs.enable_thinking=false`), and the
-models to offer in the workbench. A model id `<provider>:<model>` routes that
-role's episodes through the local shim (`shim.ts`): Anthropic wire → thinking
-forced off; OpenAI wire → full request/response translation. The operator's
-Anthropic credentials are stripped from provider-routed episodes, and
-`WebSearch`/`WebFetch` are unavailable behind a third-party base URL.
+`providers.json` declares Anthropic- or OpenAI-compatible endpoints; a model id
+`<provider>:<model>` routes that role through the local shim. `WebSearch`/`WebFetch` (and
+therefore research subagents) are unavailable behind a third-party base URL.

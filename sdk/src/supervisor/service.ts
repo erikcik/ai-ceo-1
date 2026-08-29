@@ -4,7 +4,7 @@
 //
 // This is intentionally a small supervisor around the existing CLI rather than
 // a second implementation of the Manager loop. The worker remains the normal
-// ``lh-harness run`` process, which keeps the execution kernel and old CLI
+// ``lh-harness-eray run`` process, which keeps the execution kernel and old CLI
 // compatible while giving the workbench a durable owner and command boundary.
 //
 // Node port notes: where Python spawns ``sys.executable -m lh_harness`` this
@@ -42,7 +42,7 @@ import {
   resumeEpoch,
 } from "./lifecycle.js";
 import { normaliseReasoningEffort, supportsReasoningEffort } from "../agent_registry.js";
-import { gateWorkerEnv, resolveCapabilities, writeRunMcpConfig } from "../capabilities.js";
+import { GRANTED_CAPABILITIES_ENV, gateWorkerEnv, resolveCapabilities, writeRunMcpConfig } from "../capabilities.js";
 import { DEFAULT_CLAUDE_MODEL, DEFAULT_MAX_ROUNDS, MAX_ROUNDS } from "../types.js";
 import {
   resolveNonStrict,
@@ -73,7 +73,7 @@ const MAX_SAVED_TASK_BYTES = 100_000;
 const MAX_ROUND_DIR_SCAN = 10_000;
 export const MISSING_COMPLETION_EVIDENCE =
   "worker reported completion without explicit completion evidence";
-const ROLE_KEYS = ["manager", "executor", "auditor"] as const;
+const ROLE_KEYS = ["planner", "composer", "evaluator"] as const;
 const AGENT_CHOICES: ReadonlySet<string> = new Set([
   "codex",
   "claude_code",
@@ -877,7 +877,7 @@ export class RunSupervisor {
     // An embedded supervisor controls its hosting process directly.  The PID
     // cannot be reused while that same process is executing this code; avoid
     // requiring a command-line match in test runners and wrappers.  In
-    // particular, ``lh-harness run --dashboard`` generates its run id after the
+    // particular, ``lh-harness-eray run --dashboard`` generates its run id after the
     // process has started, so that id can never appear in the original argv
     // unless the caller supplied ``--run-id`` explicitly.
     if (Boolean(owner.attached) && pid === process.pid) return true;
@@ -1649,6 +1649,10 @@ export class RunSupervisor {
     );
     const workerEnv: NodeJS.ProcessEnv = gateWorkerEnv(process.env, grantedCapabilities);
     delete workerEnv.LH_HARNESS_WEB_TOKEN;
+    // Tell the worker what was granted so role prompts can announce the
+    // provisioned integrations; env presence alone cannot distinguish
+    // "granted but credential missing" from "not granted".
+    workerEnv[GRANTED_CAPABILITIES_ENV] = grantedCapabilities.join(",");
     const runMcpConfig = writeRunMcpConfig(
       runDir,
       grantedCapabilities,
@@ -1727,7 +1731,7 @@ export class RunSupervisor {
   /**
    * Register a worker that was launched outside this supervisor.
    *
-   * ``lh-harness run --dashboard`` owns its own process, so there is no child
+   * ``lh-harness-eray run --dashboard`` owns its own process, so there is no child
    * handle for the embedded API to use.  Persisting an attached owner gives the
    * same API a safe PID control path while retaining the supervisor as the
    * single lifecycle projection authority.
@@ -2386,6 +2390,10 @@ export class RunSupervisor {
         options.targetRunId ||
         `${runId}-resume-${crypto.randomUUID().replace(/-/g, "").slice(0, 6)}`,
       reasoningEffort: typeof owner.reasoning_effort === "string" ? owner.reasoning_effort : null,
+      // A retry re-runs the same task; the operator's capability grants are
+      // part of that task's setup and must carry over, or the fresh run is
+      // silently stripped of its GitHub/Vercel/media credentials.
+      capabilities: Array.isArray(owner.capabilities) ? owner.capabilities.map(String) : null,
       recoverReservation: options.recoverReservation ?? false,
       idempotencyFingerprint: options.idempotencyFingerprint ?? null,
     });

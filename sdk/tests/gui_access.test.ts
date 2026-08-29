@@ -25,7 +25,7 @@ function perRunConfigLikeSupervisor(runDir: string, granted: string[]): string {
   return config as string;
 }
 
-for (const role of ["gui_auditor", "cli_auditor", "auditor_format_repair"] as const) {
+for (const role of ["planner", "evaluator"] as const) {
   test(`the ${role} receives the Playwright browser server`, () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "lh-gui-"));
     const config = perRunConfigLikeSupervisor(dir, ["browser"]);
@@ -38,14 +38,14 @@ for (const role of ["gui_auditor", "cli_auditor", "auditor_format_repair"] as co
   });
 }
 
-test("executors also get the browser; the manager and final reply do not", () => {
+test("the composer also gets the browser; the tailor, rubric and final reply do not", () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "lh-gui-"));
   const config = perRunConfigLikeSupervisor(dir, ["browser"]);
-  for (const role of ["gui_executor", "cli_executor"] as const) {
+  for (const role of ["composer"] as const) {
     const adapter = new ClaudeCodeAdapter({ role, mcpConfig: config, workspacePath: dir });
     assert.ok(adapter.computerUseServers()?.playwright, `${role} must have the browser`);
   }
-  for (const role of ["manager", "final_response"] as const) {
+  for (const role of ["prompt_tailor", "rubric", "final_response"] as const) {
     const adapter = new ClaudeCodeAdapter({ role, mcpConfig: config, workspacePath: dir });
     assert.equal(adapter.computerUseServers(), null, `${role} must get no tools`);
   }

@@ -58,7 +58,7 @@ test("additional directories are rejected with the exact ValueError text", () =>
 
 test("the constructor surfaces the plan on the adapter", () => {
   const adapter = new ClaudeCodeAdapter({
-    role: "cli_auditor",
+    role: "evaluator",
     model: "claude-opus-5",
     workspacePath: "/tmp/ws/",
     promptDir: "/tmp/prompts/",
@@ -66,7 +66,7 @@ test("the constructor surfaces the plan on the adapter", () => {
     guardExcludePaths: ["/tmp/ws/build"],
     env: {},
   });
-  assert.equal(adapter.role, "cli_auditor");
+  assert.equal(adapter.role, "evaluator");
   assert.equal(adapter.policy.permission_mode, "bypassPermissions");
   assert.equal(adapter.reasoningEffort, "high");
   assert.equal(adapter.computerMcpConfigured, false);
@@ -87,26 +87,37 @@ test("an unknown role never builds a plan", () => {
 // --- role policy ------------------------------------------------------------
 
 test("every role maps to its documented SDK deny-list", () => {
+  const noSideEffects = [
+    "Bash",
+    "Write",
+    "Edit",
+    "NotebookEdit",
+    "Task",
+    "mcp__*",
+    "WebSearch",
+    "WebFetch",
+  ];
   const expected: Record<string, string[]> = {
-    manager: ["Bash", "Write", "Edit", "NotebookEdit", "Task", "mcp__*"],
-    final_response: ["Bash", "Write", "Edit", "NotebookEdit", "Task", "mcp__*"],
-    gui_executor: ["Task"],
-    cli_executor: ["Task"],
-    gui_auditor: ["Write", "Edit", "NotebookEdit", "Task"],
-    cli_auditor: ["Write", "Edit", "NotebookEdit", "Task"],
-    auditor_format_repair: ["Write", "Edit", "NotebookEdit", "Task"],
+    prompt_tailor: noSideEffects,
+    final_response: noSideEffects,
+    planner: [],
+    rubric: ["Bash", "mcp__*"],
+    composer: [],
+    evaluator: [],
   };
   for (const [role, tools] of Object.entries(expected)) {
     const built = plan({ role: role as never });
     assert.deepEqual(built.sdkOptions.disallowedTools, tools, role);
     // The metadata keeps the CLI's own name for the subagent tool.
-    assert.ok(built.policyDisallowedTools.includes("Agent"), role);
     assert.ok(!built.policyDisallowedTools.includes("Task"), role);
+    if (tools.includes("Task")) {
+      assert.ok(built.policyDisallowedTools.includes("Agent"), role);
+    }
   }
 });
 
 test("the SDK options carry the isolation settings for every role", () => {
-  const built = plan({ role: "gui_executor", model: "claude-opus-5" });
+  const built = plan({ role: "composer", model: "claude-opus-5" });
   assert.deepEqual(built.sdkOptions, {
     model: "claude-opus-5",
     cwd: "/tmp/ws",
@@ -114,7 +125,7 @@ test("the SDK options carry the isolation settings for every role", () => {
     systemPrompt: { type: "preset", preset: "claude_code" },
     permissionMode: "bypassPermissions",
     allowDangerouslySkipPermissions: true,
-    disallowedTools: ["Task"],
+    disallowedTools: [],
     strictMcpConfig: true,
   });
 });
@@ -122,7 +133,7 @@ test("the SDK options carry the isolation settings for every role", () => {
 // --- environment prefix -----------------------------------------------------
 
 test("an api key populates both Anthropic credential variables", () => {
-  const built = plan({ apiKey: "sk-ant-test", role: "manager" });
+  const built = plan({ apiKey: "sk-ant-test", role: "prompt_tailor" });
   assert.equal(built.envAdditions.ANTHROPIC_API_KEY, "sk-ant-test");
   assert.equal(built.envAdditions.ANTHROPIC_AUTH_TOKEN, "sk-ant-test");
   // The template still carries the value; `redactSecrets` masks it on the way
@@ -147,7 +158,7 @@ test("the base url loses a trailing slash and then a trailing /v1", () => {
 });
 
 test("the env prefix keeps Python's order", () => {
-  const built = plan({ apiKey: "k", baseUrl: "https://api.example.com/v1", role: "cli_auditor" });
+  const built = plan({ apiKey: "k", baseUrl: "https://api.example.com/v1", role: "evaluator" });
   assert.deepEqual(Object.keys(built.envAdditions), [
     "ANTHROPIC_API_KEY",
     "ANTHROPIC_AUTH_TOKEN",
@@ -235,22 +246,22 @@ test("the computer MCP config is loaded only for roles that may have it", () => 
   const config = path.join(root, "mcp.json");
   fs.writeFileSync(config, JSON.stringify({ mcpServers: { computer: { command: "noop" } } }));
 
-  const executor = plan({ role: "cli_executor", mcpConfig: config });
+  const executor = plan({ role: "composer", mcpConfig: config });
   assert.equal(executor.computerMcpConfigured, true);
   assert.equal(executor.mcpConfigPath, config);
   assert.ok(executor.commandTemplate.includes(`--mcp-config ${config}`));
 
-  const manager = plan({ role: "manager", mcpConfig: config });
-  assert.equal(manager.computerMcpConfigured, false);
-  assert.equal(manager.mcpConfigPath, null);
-  assert.ok(!manager.commandTemplate.includes("--mcp-config"));
+  const tailor = plan({ role: "prompt_tailor", mcpConfig: config });
+  assert.equal(tailor.computerMcpConfigured, false);
+  assert.equal(tailor.mcpConfigPath, null);
+  assert.ok(!tailor.commandTemplate.includes("--mcp-config"));
 });
 
 test("LH_HARNESS_CLAUDECODE_MCP_CONFIG is the fallback source", () => {
   const root = tmpRoot();
   const config = path.join(root, "mcp.json");
   fs.writeFileSync(config, "{}");
-  const built = plan({ role: "gui_auditor", env: { LH_HARNESS_CLAUDECODE_MCP_CONFIG: config } });
+  const built = plan({ role: "evaluator", env: { LH_HARNESS_CLAUDECODE_MCP_CONFIG: config } });
   assert.equal(built.computerMcpConfigured, true);
   assert.equal(built.mcpConfigPath, config);
 });
@@ -258,13 +269,13 @@ test("LH_HARNESS_CLAUDECODE_MCP_CONFIG is the fallback source", () => {
 // --- command line -----------------------------------------------------------
 
 test("the recorded command line mirrors the Python argv exactly", () => {
-  const built = plan({ role: "manager", model: "claude-opus-5" });
+  const built = plan({ role: "prompt_tailor", model: "claude-opus-5" });
   assert.equal(
     built.commandTemplate,
     "CLAUDE_CODE_DISABLE_AUTO_MEMORY=1 CLAUDE_CODE_SKIP_PROMPT_HISTORY=1 " +
-      "LH_HARNESS_CLAUDE_ROLE=manager claude --print --output-format stream-json --verbose " +
+      "LH_HARNESS_CLAUDE_ROLE=prompt_tailor claude --print --output-format stream-json --verbose " +
       "--dangerously-skip-permissions --disallowedTools Bash Write Edit NotebookEdit Agent 'mcp__*' " +
-      "--model claude-opus-5 < {prompt_path}",
+      "WebSearch WebFetch --model claude-opus-5 < {prompt_path}",
   );
 });
 
@@ -309,7 +320,7 @@ function auditorBench(during: () => void, status: EpisodeStatus = "done", error:
   fs.writeFileSync(path.join(workspace, "keep.txt"), "content");
   const adapter = new FakeClaudeCodeAdapter(
     {
-      role: "cli_auditor",
+      role: "evaluator",
       workspacePath: workspace,
       promptDir: path.join(root, "prompts"),
       guardExcludePaths: [path.join(workspace, "build")],
@@ -324,18 +335,13 @@ function auditorBench(during: () => void, status: EpisodeStatus = "done", error:
 test("the claude metadata block is attached to every episode", async () => {
   const { adapter } = auditorBench(() => {});
   const result = await adapter.runEpisode("prompt", NOOP_ENV, new EpisodeBudget(30));
-  assert.equal(result.metadata.claude_role, "cli_auditor");
+  assert.equal(result.metadata.claude_role, "evaluator");
   assert.equal(result.metadata.claude_permission_mode, "bypassPermissions");
   assert.equal(result.metadata.claude_dangerously_skip_permissions, true);
   assert.equal(result.metadata.claude_hooks_enabled, false);
   assert.equal(result.metadata.claude_native_sandbox_enabled, false);
   assert.equal(result.metadata.claude_tool_policy, "default-minus-disallowed");
-  assert.deepEqual(result.metadata.claude_disallowed_tools, [
-    "Write",
-    "Edit",
-    "NotebookEdit",
-    "Agent",
-  ]);
+  assert.deepEqual(result.metadata.claude_disallowed_tools, []);
   assert.equal(result.metadata.claude_computer_mcp_loaded, false);
   assert.equal(result.metadata.claude_workspace_read_only, true);
   assert.equal(result.metadata.claude_reasoning_effort, "");
@@ -397,7 +403,7 @@ test("a real timeout stays visible to the runtime-failure classifier", async () 
 test("non-auditor roles never run the workspace guard", async () => {
   const root = tmpRoot();
   const adapter = new FakeClaudeCodeAdapter(
-    { role: "cli_executor", workspacePath: root, promptDir: path.join(root, "prompts"), env: {} },
+    { role: "composer", workspacePath: root, promptDir: path.join(root, "prompts"), env: {} },
     { status: "done" },
   );
   const result = await adapter.runEpisode("prompt", NOOP_ENV, new EpisodeBudget(30));

@@ -31,17 +31,19 @@ import {
   safeRunRounds,
 } from "../utils/run_boundary.js";
 import { parseTrajectory as parseAgentTrajectory } from "../agent_logs.js";
-import { parseRoleManagerNextStep } from "../role_prompts.js";
+import { readLoopSnapshot, type LoopSnapshot } from "../loop/state.js";
 import { pyStrip } from "../utils/pystr.js";
 
-// Roles whose raw trajectory a round directory can hold.
+// Roles whose episodes live under <logDir>/<role>_episodes/epNNN.
 const TRAJECTORY_ROLES = [
-  "manager",
-  "executor",
-  "auditor",
-  "auditor_format_repair",
+  "prompt_tailor",
+  "planner",
+  "rubric",
+  "composer",
+  "evaluator",
   "final_response",
 ] as const;
+const MAX_EPISODE_SEQ = 100_000;
 
 const MAX_ARTIFACT_BYTES = 8 * 1024 * 1024;
 const MAX_TRAJECTORY_BYTES = 16 * 1024 * 1024;
@@ -54,8 +56,6 @@ const MAX_JSONL_RECORDS = 20_000;
 const MAX_ARTIFACT_COUNT = 512;
 const MAX_ARTIFACT_SCAN = 2_048;
 const MAX_ARTIFACT_NAME_CHARS = 256;
-const MAX_ROUND_COUNT = 10_000;
-const MAX_ROUND_INDEX = 1_000_000;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
@@ -558,39 +558,6 @@ export class DashboardState {
     return this.roleDirPath;
   }
 
-  /** Resolve one round directory without following a root escape symlink. */
-  private safeRoundDir(roundIndex: number): string | null {
-    if (
-      typeof roundIndex !== "number" ||
-      !Number.isInteger(roundIndex) ||
-      roundIndex < 0 ||
-      roundIndex > MAX_ROUND_INDEX
-    ) {
-      return null;
-    }
-    const roleDir = this.roleDirPath;
-    const roundsRoot = path.join(roleDir, "rounds");
-    const name = `round_${String(roundIndex).padStart(3, "0")}`;
-    const candidateRoundDir = path.join(roundsRoot, name);
-    let resolvedRoundDir: string;
-    try {
-      // Do not accept symlinked directory components.  Resolving and checking a
-      // path, then opening it later, leaves a replacement race that can
-      // redirect an artifact read outside this run.
-      if (isSymlink(roleDir) || isSymlink(roundsRoot) || isSymlink(candidateRoundDir)) return null;
-      const resolvedRoleDir = fs.realpathSync(roleDir);
-      const resolvedRoundsRoot = fs.realpathSync(roundsRoot);
-      if (this.runsRoot !== null && !isInside(resolvedRoleDir, this.runsRoot)) return null;
-      if (!isInside(resolvedRoundsRoot, resolvedRoleDir)) return null;
-      resolvedRoundDir = fs.realpathSync(path.join(resolvedRoundsRoot, name));
-      if (!isInside(resolvedRoundDir, resolvedRoundsRoot)) return null;
-      if (this.runsRoot !== null && !isInside(resolvedRoundDir, this.runsRoot)) return null;
-    } catch {
-      return null;
-    }
-    return isDirectory(resolvedRoundDir) ? resolvedRoundDir : null;
-  }
-
   readReport(): Record<string, unknown> {
     for (const candidate of [
       path.join(this.logDir, "report.json"),
@@ -602,149 +569,37 @@ export class DashboardState {
     return {};
   }
 
-  readRounds(): Record<string, unknown>[] {
-    // rounds.jsonl / report.json are only written when a round *finishes*.  To
-    // reflect live progress we also scan the per-round directories, whose
-    // artifact files (manager_plan.txt, executor_output.txt, ...) are written
-    // incrementally while a round is still running.
-    const report = this.readReport();
-    const events = readJsonl(path.join(this.roleDirPath, "events.jsonl"), { strictParent: true });
-    const recorded = new Map<number, Record<string, unknown>>();
-    for (const item of readJsonl(path.join(this.roleDirPath, "rounds.jsonl"), { strictParent: true })) {
-      const index = item.round_index;
-      if (typeof index === "number" && Number.isInteger(index)) {
-        recorded.set(index, item); // append-only ledger: keep the latest
-      }
-    }
-    if (recorded.size === 0) {
-      const reportRounds = report.rounds;
-      if (Array.isArray(reportRounds)) {
-        for (const item of reportRounds) {
-          const index = isRecord(item) ? item.round_index : null;
-          if (typeof index === "number" && Number.isInteger(index)) {
-            recorded.set(index, item as Record<string, unknown>);
-          }
-        }
-      }
-    }
-
-    const reportStatus = report.status ? canonicalLifecycleStatus(report.status) : "";
-    const runFinished =
-      TERMINAL_STATUSES.has(reportStatus) ||
-      events.some(
-        (event) => event.event === "role_harness_cancelled" || event.event === "role_harness_done",
-      );
-    const merged = new Map<number, Record<string, unknown>>();
-    for (const [index, live] of this.scanRoundDirs()) {
-      live.in_progress = !runFinished && !recorded.has(index);
-      merged.set(index, { ...live, ...(recorded.get(index) ?? {}) });
-      merged.get(index)!.in_progress = live.in_progress;
-    }
-    for (const [index, item] of recorded) {
-      if (!merged.has(index)) merged.set(index, { ...item, in_progress: false });
-    }
-    for (const [index, item] of merged) {
-      const [activeRole, lifecycleSeen] = activeRoleForRound(events, index);
-      if (lifecycleSeen) item.active_role = activeRole;
-    }
-    return [...merged.keys()].sort((left, right) => left - right).map((key) => merged.get(key)!);
+  // ------------------------------------------------------------------
+  // Loop state projection (plan tree, subtasks, episodes)
+  // ------------------------------------------------------------------
+  /** The run directory that owns this log dir (``<run>/lh_harness`` → ``<run>``). */
+  get runDir(): string {
+    return path.dirname(this.logDir);
   }
 
-  private scanRoundDirs(): Map<number, Record<string, unknown>> {
-    const result = new Map<number, Record<string, unknown>>();
-    const roundsRoot = this.safeRoundsRoot();
-    if (roundsRoot === null) return result;
-    if (!isDirectory(roundsRoot)) return result;
+  readLoop(): LoopSnapshot {
     try {
-      const entries = fs.readdirSync(roundsRoot);
-      for (let entryNumber = 0; entryNumber < entries.length; entryNumber += 1) {
-        if (entryNumber >= MAX_ROUND_COUNT) break;
-        const name = entries[entryNumber];
-        const entry = path.join(roundsRoot, name);
-        if (isSymlink(entry) || !isDirectory(entry)) continue;
-        let resolvedEntry: string;
-        try {
-          resolvedEntry = fs.realpathSync(entry);
-          if (!isInside(resolvedEntry, roundsRoot)) continue;
-        } catch {
-          continue;
-        }
-        const match = /^round_(\d+)$/.exec(name);
-        if (!match) continue;
-        const index = Number.parseInt(match[1], 10);
-        if (index > MAX_ROUND_INDEX) continue;
-        result.set(index, this.roundFromDir(index, resolvedEntry));
-      }
+      return readLoopSnapshot(this.runDir, this.logDir);
     } catch {
-      return result;
-    }
-    return result;
-  }
-
-  private safeRoundsRoot(): string | null {
-    const roleDir = this.roleDirPath;
-    const roundsRoot = path.join(roleDir, "rounds");
-    try {
-      if (isSymlink(roleDir) || isSymlink(roundsRoot)) return null;
-      const resolvedRoleDir = fs.realpathSync(roleDir);
-      const resolvedRoundsRoot = fs.realpathSync(roundsRoot);
-      if (this.runsRoot !== null && !isInside(resolvedRoleDir, this.runsRoot)) return null;
-      if (!isInside(resolvedRoundsRoot, resolvedRoleDir)) return null;
-      return resolvedRoundsRoot;
-    } catch {
-      return null;
-    }
-  }
-
-  private roundFromDir(index: number, roundDir: string): Record<string, unknown> {
-    const text = (name: string): string => {
-      const [value, truncated] = readTextBounded(path.join(roundDir, name), MAX_ROUND_TEXT_BYTES, {
-        tail: false,
-        strictParent: true,
-      });
-      if (value === null) return "";
-      if (truncated) return `${value}\n[…truncated…]`;
-      return value;
-    };
-
-    const status = (role: string): Record<string, unknown> => {
-      const data = readJson(path.join(roundDir, `${role}_metadata.json`), { strictParent: true });
-      if (!isRecord(data)) return {};
-      const out: Record<string, unknown> = {};
-      for (const key of ["status", "error", "duration_ms"]) {
-        if (data[key] !== null && data[key] !== undefined) out[key] = data[key];
-      }
-      return out;
-    };
-
-    const planText = text("manager_plan.txt");
-    const finalResponse = text("final_response.txt");
-    let auditorStatus = status("auditor");
-    const repairStatus = status("auditor_format_repair");
-    if (Object.keys(repairStatus).length) {
-      auditorStatus = {
-        ...auditorStatus,
-        format_repair_attempted: true,
-        format_repair_status: repairStatus,
+      return {
+        phase: null,
+        task: "",
+        config: null,
+        plan: null,
+        plan_markdown: "",
+        plan_revisions: [],
+        status_counts: null,
+        briefings: {},
+        research: [],
+        research_notes: [],
+        subtasks: [],
+        episodes: [],
+        cost_usd: 0,
+        composer_episodes: 0,
+        decisions: "",
+        final_response: "",
       };
     }
-    return {
-      round_index: index,
-      next_step: inferNextStep(planText),
-      plan_text: planText,
-      task_state: text("task_state.txt"),
-      task_contract: text("task_contract.txt"),
-      executor_output: text("executor_output.txt"),
-      auditor_report: text("auditor_report.txt"),
-      harness_feedback: text("harness_feedback.txt"),
-      final_response: finalResponse,
-      related_report_refs: [],
-      manager_status: status("manager"),
-      executor_status: status("executor"),
-      auditor_status: auditorStatus,
-      final_response_status: status("final_response"),
-      in_progress: true,
-    };
   }
 
   readEvents(options: { limit?: number } = {}): Record<string, unknown>[] {
@@ -753,102 +608,60 @@ export class DashboardState {
     return events.slice(-boundedLimit);
   }
 
-  listRoundArtifacts(roundIndex: number): string[] {
-    const roundDir = this.safeRoundDir(roundIndex);
-    if (roundDir === null) return [];
-    let fd: number;
+  // ------------------------------------------------------------------
+  // State files (<run>/state/...): plan, rubrics, progress, evidence, context
+  // ------------------------------------------------------------------
+  private get stateRoot(): string | null {
+    const candidate = path.join(this.runDir, "state");
     try {
-      fd = openNofollow(roundDir, { directory: true, strictParent: true });
+      if (isSymlink(candidate) || !isDirectory(candidate)) return null;
+      const resolved = fs.realpathSync(candidate);
+      if (this.runsRoot !== null && !isInside(resolved, this.runsRoot)) return null;
+      return resolved;
     } catch {
-      return [];
+      return null;
     }
-    const artifacts: string[] = [];
-    try {
-      const entries = fs.readdirSync(roundDir);
-      for (let entryNumber = 0; entryNumber < entries.length; entryNumber += 1) {
-        if (entryNumber >= MAX_ARTIFACT_SCAN) break;
-        const name = String(entries[entryNumber]);
-        if (name.length > MAX_ARTIFACT_NAME_CHARS) continue;
-        const candidate = path.join(roundDir, name);
-        let isFile: boolean;
-        try {
-          const childFd = openNofollow(candidate, { strictParent: true });
-          try {
-            isFile = fs.fstatSync(childFd).isFile();
-          } finally {
-            fs.closeSync(childFd);
-          }
-        } catch {
-          continue;
-        }
-        if (isFile) artifacts.push(name);
-        if (artifacts.length >= MAX_ARTIFACT_COUNT) break;
-      }
-    } catch {
-      return [];
-    } finally {
+  }
+
+  /** Resolve a relative state path (no traversal, no symlinks) to an absolute regular file or directory. */
+  resolveStateFile(relative: string): string | null {
+    if (typeof relative !== "string" || !relative || relative.length > 1024) return null;
+    if ([...relative].some((char) => char.codePointAt(0)! < 0x20 || char.codePointAt(0) === 0x7f)) return null;
+    const parts = relative.split("/").filter((part) => part);
+    if (!parts.length || parts.some((part) => part === "." || part === ".." || part.includes("\\") || part.length > MAX_ARTIFACT_NAME_CHARS)) return null;
+    const root = this.stateRoot;
+    if (root === null) return null;
+    let current = root;
+    for (const part of parts) {
+      current = path.join(current, part);
       try {
-        fs.closeSync(fd);
+        if (isSymlink(current)) return null;
+        const resolved = fs.realpathSync(current);
+        if (!isInside(resolved, root)) return null;
+        current = resolved;
       } catch {
-        /* ignore */
+        return null;
       }
     }
-    return artifacts.sort();
+    return current;
   }
 
-  resolveRoundArtifact(roundIndex: number, name: string): string | null {
-    // Guard against path traversal: only allow plain file names.
-    if (typeof name !== "string" || name.length > MAX_ARTIFACT_NAME_CHARS) return null;
-    if ([...name].some((char) => char.codePointAt(0)! < 0x20 || char.codePointAt(0) === 0x7f)) return null;
-    if (name.includes("/") || name.includes("\\") || name === "" || name === "." || name === "..") return null;
-    const roundsRoot = this.safeRoundsRoot();
-    const roundDir = this.safeRoundDir(roundIndex);
-    if (roundsRoot === null || roundDir === null) return null;
-    let target: string;
+  listStateDir(relative: string): string[] {
+    const target = relative ? this.resolveStateFile(relative) : this.stateRoot;
+    if (target === null || !isDirectory(target)) return [];
     try {
-      // Resolve the directory chain itself before resolving the file.  Checking
-      // only the file name lets a symlinked ``round_001`` redirect the API into
-      // an arbitrary directory (for example a workspace secret) while still
-      // passing the filename traversal check.
-      const candidate = path.join(roundDir, name);
-      if (isSymlink(candidate)) return null;
-      target = fs.realpathSync(candidate);
-      if (!isInside(target, roundDir)) return null;
+      return fs
+        .readdirSync(target)
+        .filter((name) => !isSymlink(path.join(target, name)))
+        .slice(0, MAX_ARTIFACT_COUNT)
+        .sort();
     } catch {
-      return null;
+      return [];
     }
-    // Reject a final symlink as well as a symlinked round directory.  The read
-    // methods below open the returned path with O_NOFOLLOW, so a replacement
-    // after this check cannot turn into a path escape.
-    if (isSymlink(target)) return null;
-    try {
-      if (!fs.statSync(target).isFile()) return null;
-    } catch {
-      return null;
-    }
-    return target;
   }
 
-  readRoundArtifact(roundIndex: number, name: string): string | null {
-    const target = this.resolveRoundArtifact(roundIndex, name);
-    if (target === null) return null;
-    const [data, tooLarge] = readFileBounded(target, MAX_ARTIFACT_BYTES, { tail: false, strictParent: true });
-    if (tooLarge || data === null) return null;
-    return data.toString("utf-8");
-  }
-
-  readRoundArtifactBytes(roundIndex: number, name: string): Buffer | null {
-    const target = this.resolveRoundArtifact(roundIndex, name);
-    if (target === null) return null;
-    const [data, tooLarge] = readFileBounded(target, MAX_ARTIFACT_BYTES, { tail: false, strictParent: true });
-    if (tooLarge) return null;
-    if (data === null) return null;
-    return data;
-  }
-
-  /** Return a securely-opened artifact size, or ``null`` if unavailable. */
-  roundArtifactSize(roundIndex: number, name: string): number | null {
-    const target = this.resolveRoundArtifact(roundIndex, name);
+  stateFileSize(relative: string): number | null {
+    const target = this.resolveStateFile(relative);
     if (target === null) return null;
     try {
       const fd = openNofollow(target, { strictParent: true });
@@ -863,119 +676,110 @@ export class DashboardState {
     }
   }
 
-  // ------------------------------------------------------------------
-  // Full role trajectories normalized across supported agent backends
-  // ------------------------------------------------------------------
-  /** Roles that have a saved raw trajectory for the given round. */
-  listRoundRoles(roundIndex: number): string[] {
-    const roundDir = this.safeRoundDir(roundIndex);
-    if (roundDir === null) return [];
-    const roles: string[] = [];
-    for (const role of TRAJECTORY_ROLES) {
-      if (DashboardState.trajectoryPath(roundDir, role) !== null) roles.push(role);
-    }
-    return roles;
+  readStateFile(relative: string): string | null {
+    const bytes = this.readStateFileBytes(relative);
+    return bytes === null ? null : bytes.toString("utf-8");
   }
 
-  private static trajectoryPath(roundDir: string, role: string): string | null {
-    // New runs save .jsonl; keep reading .txt for older runs.
-    for (const suffix of [".jsonl", ".txt"]) {
-      const candidate = path.join(roundDir, `${role}_raw_trajectory${suffix}`);
-      let resolved: string;
-      try {
-        if (isSymlink(candidate)) continue;
-        resolved = fs.realpathSync(candidate);
-        if (!isInside(resolved, roundDir)) continue;
-      } catch {
-        continue;
-      }
-      let isFile: boolean;
-      try {
-        const fd = openNofollow(resolved, { strictParent: true });
-        try {
-          isFile = fs.fstatSync(fd).isFile();
-        } finally {
-          fs.closeSync(fd);
-        }
-      } catch {
-        continue;
-      }
-      if (isFile) return resolved;
-    }
-    return null;
+  readStateFileBytes(relative: string): Buffer | null {
+    const target = this.resolveStateFile(relative);
+    if (target === null) return null;
+    const [data, tooLarge] = readFileBounded(target, MAX_ARTIFACT_BYTES, { tail: false, strictParent: true });
+    if (tooLarge || data === null) return null;
+    return data;
   }
 
-  private static normalizedTrajectoryPath(roundDir: string, role: string): string | null {
-    const candidate = path.join(roundDir, `${role}_trajectory.jsonl`);
-    let resolved: string;
-    let isFile: boolean;
+  // ------------------------------------------------------------------
+  // Episode trajectories: <logDir>/<role>_episodes/epNNN
+  // ------------------------------------------------------------------
+  private safeEpisodeDir(role: string, seq: number): string | null {
+    if (!(TRAJECTORY_ROLES as readonly string[]).includes(role)) return null;
+    if (!Number.isInteger(seq) || seq < 1 || seq > MAX_EPISODE_SEQ) return null;
+    const root = path.join(this.logDir, `${role}_episodes`);
+    const candidate = path.join(root, `ep${String(seq).padStart(3, "0")}`);
     try {
+      if (isSymlink(root) || isSymlink(candidate)) return null;
+      const resolvedRoot = fs.realpathSync(root);
+      const resolved = fs.realpathSync(candidate);
+      if (this.runsRoot !== null && !isInside(resolvedRoot, this.runsRoot)) return null;
+      if (!isInside(resolved, resolvedRoot)) return null;
+      return isDirectory(resolved) ? resolved : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /** Episode number from an index entry's absolute dir (``.../composer_episodes/ep004`` → 4). */
+  static episodeSeqFromDir(dir: string): { role: string; ep: number } | null {
+    const match = /([a-z_]+)_episodes[\/\\]ep(\d{3,})$/.exec(dir);
+    if (!match) return null;
+    return { role: match[1]!, ep: Number.parseInt(match[2]!, 10) };
+  }
+
+  listEpisodeArtifacts(role: string, seq: number): string[] {
+    const dir = this.safeEpisodeDir(role, seq);
+    if (dir === null) return [];
+    try {
+      return fs.readdirSync(dir).filter((name) => !isSymlink(path.join(dir, name)) && fs.statSync(path.join(dir, name)).isFile()).slice(0, MAX_ARTIFACT_COUNT).sort();
+    } catch {
+      return [];
+    }
+  }
+
+  resolveEpisodeArtifact(role: string, seq: number, name: string): string | null {
+    if (typeof name !== "string" || name.length > MAX_ARTIFACT_NAME_CHARS) return null;
+    if ([...name].some((char) => char.codePointAt(0)! < 0x20 || char.codePointAt(0) === 0x7f)) return null;
+    if (name.includes("/") || name.includes("\\") || name === "" || name === "." || name === "..") return null;
+    const dir = this.safeEpisodeDir(role, seq);
+    if (dir === null) return null;
+    try {
+      const candidate = path.join(dir, name);
       if (isSymlink(candidate)) return null;
-      resolved = fs.realpathSync(candidate);
-      if (!isInside(resolved, roundDir)) return null;
-      const fd = openNofollow(resolved, { strictParent: true });
+      const target = fs.realpathSync(candidate);
+      if (!isInside(target, dir) || isSymlink(target) || !fs.statSync(target).isFile()) return null;
+      return target;
+    } catch {
+      return null;
+    }
+  }
+
+  readEpisodeArtifactBytes(role: string, seq: number, name: string): Buffer | null {
+    const target = this.resolveEpisodeArtifact(role, seq, name);
+    if (target === null) return null;
+    const [data, tooLarge] = readFileBounded(target, MAX_ARTIFACT_BYTES, { tail: false, strictParent: true });
+    if (tooLarge || data === null) return null;
+    return data;
+  }
+
+  episodeArtifactSize(role: string, seq: number, name: string): number | null {
+    const target = this.resolveEpisodeArtifact(role, seq, name);
+    if (target === null) return null;
+    try {
+      const fd = openNofollow(target, { strictParent: true });
       try {
-        isFile = fs.fstatSync(fd).isFile();
+        const info = fs.fstatSync(fd);
+        return info.isFile() ? Number(info.size) : null;
       } finally {
         fs.closeSync(fd);
       }
     } catch {
       return null;
     }
-    return isFile ? resolved : null;
   }
 
-  /** Current byte size of each role's trajectory file (for live refresh). */
-  private roundTrajectorySizes(roundIndex: number): Record<string, number> {
-    const sizes: Record<string, number> = {};
-    const roundDir = this.safeRoundDir(roundIndex);
-    if (roundDir === null) return sizes;
-    for (const role of TRAJECTORY_ROLES) {
-      const target = DashboardState.trajectoryPath(roundDir, role);
-      if (target !== null) {
-        try {
-          const fd = openNofollow(target, { strictParent: true });
-          try {
-            sizes[role] = Number(fs.fstatSync(fd).size);
-          } finally {
-            fs.closeSync(fd);
-          }
-        } catch {
-          sizes[role] = 0;
-        }
-      }
-    }
-    return sizes;
-  }
-
-  /** Parse a role's raw agent trajectory into ordered, backend-agnostic steps. */
-  readTrajectory(roundIndex: number, role: string): Record<string, unknown> | null {
-    if (!(TRAJECTORY_ROLES as readonly string[]).includes(role)) return null;
-    const roundDir = this.safeRoundDir(roundIndex);
-    if (roundDir === null) return null;
-    const normalizedPath = DashboardState.normalizedTrajectoryPath(roundDir, role);
-    const trajectoryPath = normalizedPath ?? DashboardState.trajectoryPath(roundDir, role);
+  /** Parse one episode's trajectory (normalised when present, else the provider stream). */
+  readTrajectory(role: string, seq: number): Record<string, unknown> | null {
+    const dir = this.safeEpisodeDir(role, seq);
+    if (dir === null) return null;
+    const normalizedPath = this.resolveEpisodeArtifact(role, seq, `${role}_trajectory.jsonl`);
+    const trajectoryPath = normalizedPath ?? this.resolveEpisodeArtifact(role, seq, `${role}_raw_trajectory.jsonl`);
     if (trajectoryPath === null) return null;
-    const [data, tooLarge] = readFileBounded(trajectoryPath, MAX_TRAJECTORY_BYTES, {
-      tail: false,
-      strictParent: true,
-    });
+    const [data, tooLarge] = readFileBounded(trajectoryPath, MAX_TRAJECTORY_BYTES, { tail: false, strictParent: true });
     if (tooLarge) {
-      return {
-        round_index: roundIndex,
-        role,
-        steps: [],
-        step_count: 0,
-        raw_chars: 0,
-        warning: "trajectory is too large to render",
-      };
+      return { role, episode: seq, steps: [], step_count: 0, raw_chars: 0, warning: "trajectory is too large to render" };
     }
     if (data === null) return null;
     const raw = data.toString("utf-8");
-    // The byte cap alone does not bound response/DOM growth: a valid JSONL file
-    // can contain hundreds of thousands of tiny events.  Ask the parser for one
-    // sentinel item beyond the UI limit so truncation is detectable while
-    // parsing itself remains bounded.
     let steps: Record<string, unknown>[];
     if (normalizedPath !== null) {
       const recent: Record<string, unknown>[] = [];
@@ -999,8 +803,8 @@ export class DashboardState {
     steps = deduplicateFinalText(steps);
     if (stepsTruncated) steps = steps.slice(-MAX_TRAJECTORY_STEPS);
     const result: Record<string, unknown> = {
-      round_index: roundIndex,
       role,
+      episode: seq,
       steps,
       step_count: steps.length,
       raw_chars: raw.length,
@@ -1008,18 +812,13 @@ export class DashboardState {
     };
     if (stepsTruncated) {
       result.steps_truncated = true;
-      result.warning =
-        `trajectory has more than ${MAX_TRAJECTORY_STEPS} steps; ` +
-        `showing the latest ${MAX_TRAJECTORY_STEPS}`;
+      result.warning = `trajectory has more than ${MAX_TRAJECTORY_STEPS} steps; showing the latest ${MAX_TRAJECTORY_STEPS}`;
     }
     return result;
   }
 
   snapshot(): Record<string, unknown> {
     const report = this.readReport();
-    // The final reply is written before the aggregate report in the manager
-    // completion path. Expose the role-scoped file immediately so a live
-    // dashboard can render it without waiting for report.json.
     let [finalResponse] = readTextBounded(
       path.join(this.roleDirPath, "final_response.txt"),
       MAX_ROUND_TEXT_BYTES,
@@ -1028,25 +827,15 @@ export class DashboardState {
     if (!finalResponse && typeof report.final_response === "string") {
       finalResponse = report.final_response;
     }
-    const rounds = this.readRounds();
-    for (const item of rounds) {
-      const index = item.round_index;
-      if (typeof index === "number" && Number.isInteger(index)) {
-        item.roles = this.listRoundRoles(index);
-        // Trajectory byte sizes let the UI detect live growth (the files are
-        // tee'd while a role runs) and refetch without a full reload.
-        item.role_sizes = this.roundTrajectorySizes(index);
-      }
-    }
+    const loop = this.readLoop();
     return {
-      task: this.task || report.task || "",
+      task: this.task || loop.task || report.task || "",
       log_dir: String(this.logDir),
       runs: this.listRuns(),
       current_run: this.currentRunId,
       report,
-      final_response: finalResponse || "",
-      rounds,
-      round_count: rounds.length,
+      final_response: finalResponse || loop.final_response || "",
+      loop,
       events: this.readEvents({ limit: 200 }),
       approvals: this.listApprovals(),
       operator_messages: this.listOperatorMessages(),
@@ -1401,18 +1190,6 @@ export class DashboardState {
   }
 }
 
-/**
- * Route of an in-progress round, read from its ``manager_plan.txt``.
- *
- * Reuses the harness route parser so the UI can never drift from the routes the
- * manager loop actually recognizes. An unparseable plan shows no route badge
- * rather than the loop's internal ``invalid`` marker.
- */
-function inferNextStep(planText: string): string {
-  const route = parseRoleManagerNextStep(planText);
-  return route === "invalid" ? "" : route;
-}
-
 function deduplicateFinalText(steps: Record<string, unknown>[]): Record<string, unknown>[] {
   if (!steps.length || steps[steps.length - 1].kind !== "result") return steps;
   const finalText = pyStrip(String(steps[steps.length - 1].text ?? ""));
@@ -1425,45 +1202,6 @@ function deduplicateFinalText(steps: Record<string, unknown>[]): Record<string, 
     break;
   }
   return steps;
-}
-
-export function activeRoleForRound(
-  events: Record<string, unknown>[],
-  roundIndex: number,
-): [string | null, boolean] {
-  const starts: Record<string, string> = {
-    manager_round_start: "manager",
-    executor_role_start: "executor",
-    auditor_role_start: "auditor",
-    auditor_format_repair_start: "auditor_format_repair",
-    final_response_start: "final_response",
-  };
-  const stops = new Set([
-    "manager_round_done",
-    "executor_role_done",
-    "auditor_role_done",
-    "auditor_format_repair_done",
-    "final_response_done",
-    "managed_round_recorded",
-  ]);
-  let active: string | null = null;
-  let seen = false;
-  for (const event of events) {
-    const name = String(event.event ?? "");
-    if (name === "role_harness_cancelled" || name === "role_harness_done") {
-      active = null;
-      seen = true;
-    } else if (event.round === roundIndex) {
-      if (name in starts) {
-        active = starts[name];
-        seen = true;
-      } else if (stops.has(name)) {
-        active = null;
-        seen = true;
-      }
-    }
-  }
-  return [active, seen];
 }
 
 /** Compare append-only approval snapshots without trusting process order. */
